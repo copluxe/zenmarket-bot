@@ -1,5 +1,5 @@
 """
-Discord embed builder and button interaction handler for ZenMarket listings.
+Discord embed builder and button interaction handler for Mercari JP listings.
 """
 
 import logging
@@ -15,17 +15,10 @@ logger = logging.getLogger(__name__)
 # Embed color per source
 SOURCE_COLORS = {
     'mercari': 0xFF4F00,  # Mercari orange
-    'rakuma':  0x9B59B6,  # Rakuma purple
-}
-
-SOURCE_LABELS = {
-    'mercari': 'ZenMarket (Mercari)',
-    'rakuma':  'ZenMarket (Rakuma)',
 }
 
 SOURCE_FULL = {
     'mercari': 'Mercari Japan',
-    'rakuma':  'Rakuma',
 }
 
 
@@ -78,13 +71,9 @@ def build_listing_embed(
         value='✅ Disponible' if listing.status == 'available' else '❌ Vendu',
         inline=True,
     )
-    if listing.direct_url:
-        link_value = (
-            f'[🛒 ZenMarket]({listing.url})\n'
-            f'[🇯🇵 Mercari Japan]({listing.direct_url})'
-        )
-    else:
-        link_value = f'[Voir sur {SOURCE_LABELS[listing.source]}]({listing.url})'
+    link_value = f'[🇯🇵 Mercari Japan]({listing.url})'
+    if listing.zenmarket_url:
+        link_value += f'\n[🛒 Chercher sur ZenMarket]({listing.zenmarket_url})'
     embed.add_field(
         name='🔗 Liens',
         value=link_value,
