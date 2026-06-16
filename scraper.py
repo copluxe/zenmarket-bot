@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 MERCARI_SEARCH_URL = 'https://jp.mercari.com/search?keyword={keyword}&status=on_sale'
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/mercari.aspx?q={query}'
+ZENMARKET_ITEM_URL = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
 
 _BROWSER_HEADERS = {
     'User-Agent': (
@@ -84,7 +85,7 @@ class Listing:
     status: str           # 'available' | 'sold'
     image_url: str
     url: str              # Mercari JP direct link
-    zenmarket_url: str    # ZenMarket search link for ordering
+    zenmarket_url: str    # ZenMarket direct item link for ordering
     source: str           # 'mercari'
     posted_ago: str
     direct_url: Optional[str] = None
@@ -272,7 +273,6 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
         return []
 
     listings: list[Listing] = []
-    zenmarket_url = ZENMARKET_SEARCH_URL.format(query=quote(query))
 
     for item in items:
         try:
@@ -311,6 +311,7 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             posted_ago = _parse_posted_ago(created)
 
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
+            zenmarket_url = ZENMARKET_ITEM_URL.format(item_id=item_id)
 
             listings.append(Listing(
                 id=f'mercari_{item_id}',
