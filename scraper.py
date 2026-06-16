@@ -5,21 +5,27 @@ Rakuma listings still use the ZenMarket HTML scrape path (legacy).
 """
 
 import asyncio
+import base64
+import json
 import logging
 import re
 import time
+import uuid as _uuid
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
+from ecdsa import SigningKey, NIST256p
+from ecdsa.util import sigencode_string
 from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-MERCARI_API_URL = 'https://api.mercari.jp/search_index/search'
+MERCARI_API_URL = 'https://api.mercari.jp/v2/entities:search'
 ZENMARKET_MERCARI_LINK = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
+MERCARI_DIRECT_LINK = 'https://jp.mercari.com/item/{item_id}'
 
 RAKUMA_SEARCH_URL = 'https://zenmarket.jp/rakuma.aspx?q={query}'
 
@@ -43,15 +49,45 @@ _CONDITION_ID_MAP = {
     6: '全体的に状態が悪い',
 }
 
-_MERCARI_HOME = 'https://jp.mercari.com/'
-
 _MERCARI_HEADERS = {
     'X-Platform': 'web',
     'Accept': 'application/json, text/plain, */*',
+    'Accept-Encoding': 'deflate, gzip',
     'Accept-Language': 'ja-JP,ja;q=0.9',
+    'Content-Type': 'application/json; charset=utf-8',
     'Origin': 'https://jp.mercari.com',
     'Referer': 'https://jp.mercari.com/',
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/125.0.0.0 Safari/537.36'
+    ),
 }
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
+
+
+def _generate_dpop(method: str, url: str) -> str:
+    """Generate a DPoP JWT signed with a fresh ECDSA P-256 key pair."""
+    sk = SigningKey.generate(curve=NIST256p)
+    vk = sk.get_verifying_key()
+    pub_key = vk.to_string()
+    x = _b64url(pub_key[:32])
+    y = _b64url(pub_key[32:])
+    jwk = {'crv': 'P-256', 'kty': 'EC', 'x': x, 'y': y}
+    header_json = json.dumps({'typ': 'dpop+jwt', 'alg': 'ES256', 'jwk': jwk}, separators=(',', ':'))
+    payload_json = json.dumps({
+        'iat': int(time.time()),
+        'jti': str(_uuid.uuid4()),
+        'htu': url,
+        'htm': method.upper(),
+    }, separators=(',', ':'))
+    signing_input = f'{_b64url(header_json.encode())}.{_b64url(payload_json.encode())}'
+    sig_bytes = sk.sign(signing_input.encode('utf-8'), sigencode=sigencode_string)
+    return f'{signing_input}.{_b64url(sig_bytes)}'
+
 
 _HTML_HEADERS = {
     'User-Agent': (
@@ -106,6 +142,7 @@ class Listing:
     url: str
     source: str          # 'mercari' | 'rakuma'
     posted_ago: str      # e.g. "2 heures"
+    direct_url: Optional[str] = None
     price_eur: int = field(init=False)
 
     def __post_init__(self):
@@ -174,6 +211,7 @@ def _parse_mercari_items(items: list) -> list[Listing]:
                 url=ZENMARKET_MERCARI_LINK.format(item_id=item_id),
                 source='mercari',
                 posted_ago=posted_ago,
+                direct_url=MERCARI_DIRECT_LINK.format(item_id=item_id),
             ))
         except Exception as exc:
             logger.debug('Mercari item parse error: %s', exc)
@@ -181,45 +219,47 @@ def _parse_mercari_items(items: list) -> list[Listing]:
 
 
 async def _fetch_mercari_api(keyword: str, limit: int = 30, max_retries: int = 3) -> list[Listing]:
-    params = urlencode({'keyword': keyword, 'limit': limit, 'status': 'on_sale'})
-    url = f'{MERCARI_API_URL}?{params}'
+    body = {
+        'userId': '',
+        'pageSize': limit,
+        'pageToken': '',
+        'searchSessionId': str(_uuid.uuid4()),
+        'indexRouting': 'INDEX_ROUTING_UNSPECIFIED',
+        'thumbnailTypes': [],
+        'searchCondition': {
+            'keyword': keyword,
+            'sort': 'SORT_CREATED_TIME',
+            'order': 'ORDER_DESC',
+            'status': ['STATUS_ON_SALE'],
+            'sizeId': [], 'categoryId': [], 'brandId': [], 'sellerId': [],
+            'priceMin': 0, 'priceMax': 0,
+            'itemConditionId': [], 'shippingPayerId': [],
+            'shippingFromArea': [], 'shippingMethod': [],
+            'colorId': [], 'hasCoupon': False,
+            'attributes': [], 'itemTypes': [], 'skuIds': [],
+            'excludeKeyword': '',
+        },
+        'defaultDatasets': [],
+        'serviceFrom': 'suruga',
+    }
     delay = 2
 
     async with AsyncSession() as session:
-        # Visit homepage first to populate session cookies (including _csrf)
-        csrf_token = ''
-        try:
-            home_resp = await session.get(
-                _MERCARI_HOME,
-                impersonate='chrome120',
-                headers={
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'ja-JP,ja;q=0.9',
-                },
-                timeout=20,
-            )
-            csrf_token = (
-                home_resp.cookies.get('_csrf', '')
-                or session.cookies.get('_csrf', '')
-            )
-        except Exception as exc:
-            logger.warning('Mercari session init failed for "%s": %s', keyword, exc)
-
-        headers = dict(_MERCARI_HEADERS)
-        if csrf_token:
-            headers['X-CSRF-Token'] = csrf_token
-
         for attempt in range(max_retries):
             try:
-                response = await session.get(
-                    url,
+                headers = dict(_MERCARI_HEADERS)
+                headers['DPoP'] = _generate_dpop('POST', MERCARI_API_URL)
+
+                response = await session.post(
+                    MERCARI_API_URL,
                     impersonate='chrome120',
                     headers=headers,
+                    json=body,
                     timeout=30,
                 )
                 response.raise_for_status()
                 data = response.json()
-                # response shape: {"meta": {...}, "items": [...]}
+                # v2 response shape: {"meta": {...}, "items": [...]}
                 items = data.get('items') or data.get('data', {}).get('items', [])
                 return _parse_mercari_items(items)
             except Exception as exc:

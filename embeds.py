@@ -78,9 +78,16 @@ def build_listing_embed(
         value='✅ Disponible' if listing.status == 'available' else '❌ Vendu',
         inline=True,
     )
+    if listing.direct_url:
+        link_value = (
+            f'[🛒 ZenMarket]({listing.url})\n'
+            f'[🇯🇵 Mercari Japan]({listing.direct_url})'
+        )
+    else:
+        link_value = f'[Voir sur {SOURCE_LABELS[listing.source]}]({listing.url})'
     embed.add_field(
-        name='🔗 Lien',
-        value=f'[Voir sur {SOURCE_LABELS[listing.source]}]({listing.url})',
+        name='🔗 Liens',
+        value=link_value,
         inline=True,
     )
 
