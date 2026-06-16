@@ -43,11 +43,14 @@ _CONDITION_ID_MAP = {
     6: '全体的に状態が悪い',
 }
 
+_MERCARI_HOME = 'https://jp.mercari.com/'
+
 _MERCARI_HEADERS = {
-    'Authorization': 'Bearer anonymous',
     'X-Platform': 'web',
     'Accept': 'application/json, text/plain, */*',
     'Accept-Language': 'ja-JP,ja;q=0.9',
+    'Origin': 'https://jp.mercari.com',
+    'Referer': 'https://jp.mercari.com/',
 }
 
 _HTML_HEADERS = {
@@ -183,12 +186,35 @@ async def _fetch_mercari_api(keyword: str, limit: int = 30, max_retries: int = 3
     delay = 2
 
     async with AsyncSession() as session:
+        # Visit homepage first to populate session cookies (including _csrf)
+        csrf_token = ''
+        try:
+            home_resp = await session.get(
+                _MERCARI_HOME,
+                impersonate='chrome120',
+                headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'ja-JP,ja;q=0.9',
+                },
+                timeout=20,
+            )
+            csrf_token = (
+                home_resp.cookies.get('_csrf', '')
+                or session.cookies.get('_csrf', '')
+            )
+        except Exception as exc:
+            logger.warning('Mercari session init failed for "%s": %s', keyword, exc)
+
+        headers = dict(_MERCARI_HEADERS)
+        if csrf_token:
+            headers['X-CSRF-Token'] = csrf_token
+
         for attempt in range(max_retries):
             try:
                 response = await session.get(
                     url,
                     impersonate='chrome120',
-                    headers=_MERCARI_HEADERS,
+                    headers=headers,
                     timeout=30,
                 )
                 response.raise_for_status()
