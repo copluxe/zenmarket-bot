@@ -1,6 +1,6 @@
 """
-ZenMarket scraper — uses ScraperAPI to fetch ZenMarket search pages for
-Mercari Japan and Rakuma listings.
+ZenMarket scraper — uses curl-cffi with a session cookie to fetch ZenMarket
+search pages for Mercari Japan and Rakuma listings.
 """
 
 import asyncio
@@ -12,13 +12,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
 
-import aiohttp
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
+from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-SCRAPER_API_BASE = 'http://api.scraperapi.com'
 ZENMARKET_MERCARI_SEARCH = 'https://zenmarket.jp/mercari.aspx?q={query}'
 ZENMARKET_MERCARI_LINK = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
 MERCARI_DIRECT_LINK = 'https://jp.mercari.com/item/{item_id}'
@@ -129,29 +128,34 @@ def _extract_id(href: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# ScraperAPI fetch
+# ZenMarket session-cookie fetch (curl-cffi, impersonates Chrome)
 # ---------------------------------------------------------------------------
 
-async def _scraperapi_fetch(target_url: str, max_retries: int = 3) -> str:
-    """Fetch target_url through ScraperAPI, returns HTML text or empty string on failure."""
-    api_key = os.getenv('SCRAPER_API_KEY', '')
-    if not api_key:
-        logger.error('SCRAPER_API_KEY is not set — cannot fetch via ScraperAPI')
+async def _zenmarket_fetch(target_url: str, max_retries: int = 3) -> str:
+    """Fetch a ZenMarket page using a session cookie for authenticated access."""
+    session_cookie = os.getenv('ZENMARKET_SESSION_COOKIE', '')
+    if not session_cookie:
+        logger.error('ZENMARKET_SESSION_COOKIE is not set — cannot fetch ZenMarket pages')
         return ''
-    endpoint = f'{SCRAPER_API_BASE}?api_key={api_key}&url={quote(target_url, safe="")}&render=true'
+    headers = {
+        **_HTML_HEADERS,
+        'Cookie': session_cookie,
+    }
     delay = 2
     for attempt in range(max_retries):
         try:
-            async with aiohttp.ClientSession(headers=_HTML_HEADERS) as session:
-                async with session.get(
-                    endpoint,
-                    timeout=aiohttp.ClientTimeout(total=90),
-                ) as response:
-                    response.raise_for_status()
-                    return await response.text()
+            async with AsyncSession() as session:
+                response = await session.get(
+                    target_url,
+                    headers=headers,
+                    impersonate='chrome120',
+                    timeout=30,
+                )
+                response.raise_for_status()
+                return response.text
         except Exception as exc:
             logger.warning(
-                'ScraperAPI attempt %d/%d for "%s": %s',
+                'ZenMarket fetch attempt %d/%d for "%s": %s',
                 attempt + 1, max_retries, target_url, exc,
             )
             if attempt < max_retries - 1:
@@ -281,7 +285,7 @@ def _parse_zenmarket_html(html: str, source: str) -> list[Listing]:
 
 async def _fetch_mercari(keyword: str, max_retries: int = 3) -> list[Listing]:
     url = ZENMARKET_MERCARI_SEARCH.format(query=quote(keyword))
-    html = await _scraperapi_fetch(url, max_retries=max_retries)
+    html = await _zenmarket_fetch(url, max_retries=max_retries)
     if not html:
         return []
     listings = _parse_zenmarket_html(html, 'mercari')
@@ -292,7 +296,7 @@ async def _fetch_mercari(keyword: str, max_retries: int = 3) -> list[Listing]:
 
 async def _fetch_rakuma(keyword: str, max_retries: int = 3) -> list[Listing]:
     url = ZENMARKET_RAKUMA_SEARCH.format(query=quote(keyword))
-    html = await _scraperapi_fetch(url, max_retries=max_retries)
+    html = await _zenmarket_fetch(url, max_retries=max_retries)
     if not html:
         return []
     listings = _parse_zenmarket_html(html, 'rakuma')
