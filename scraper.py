@@ -1,6 +1,7 @@
 """
-ZenMarket scraper for Mercari Japan and Rakuma search results.
-Uses curl-cffi to impersonate a real browser at the TLS level, bypassing Cloudflare.
+ZenMarket scraper — Mercari Japan listings fetched directly from the Mercari
+search API; ZenMarket item links are constructed from the returned item IDs.
+Rakuma listings still use the ZenMarket HTML scrape path (legacy).
 """
 
 import asyncio
@@ -9,7 +10,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import AsyncSession
@@ -17,10 +18,10 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-SEARCH_URLS = {
-    'mercari': 'https://zenmarket.jp/mercari.aspx?q={query}',
-    'rakuma':  'https://zenmarket.jp/rakuma.aspx?q={query}',
-}
+MERCARI_API_URL = 'https://api.mercari.jp/search_index/search'
+ZENMARKET_MERCARI_LINK = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
+
+RAKUMA_SEARCH_URL = 'https://zenmarket.jp/rakuma.aspx?q={query}'
 
 CONDITION_MAP = {
     '新品、未使用':       'Neuf',
@@ -32,7 +33,24 @@ CONDITION_MAP = {
     '全体的に状態が悪い': 'Mauvais état',
 }
 
-_HEADERS = {
+# Mercari condition IDs (fallback when condition object is absent)
+_CONDITION_ID_MAP = {
+    1: '新品、未使用',
+    2: '未使用に近い',
+    3: '目立つ傷や汚れなし',
+    4: 'やや傷や汚れあり',
+    5: '傷や汚れあり',
+    6: '全体的に状態が悪い',
+}
+
+_MERCARI_HEADERS = {
+    'Authorization': 'Bearer anonymous',
+    'X-Platform': 'web',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'ja-JP,ja;q=0.9',
+}
+
+_HTML_HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
         'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -48,7 +66,6 @@ _EUR_CACHE_TTL = 3600
 
 
 def _get_eur_per_jpy() -> float:
-    """Return the EUR/JPY exchange rate (EUR per 1 JPY)."""
     now = time.time()
     if _eur_rate_cache['rate'] and now - _eur_rate_cache['fetched_at'] < _EUR_CACHE_TTL:
         return _eur_rate_cache['rate']
@@ -66,7 +83,7 @@ def _get_eur_per_jpy() -> float:
         return rate
     except Exception as exc:
         logger.warning('Exchange rate fetch failed: %s', exc)
-        return 1 / 160.0  # fallback ~160 JPY/EUR
+        return 1 / 160.0
 
 
 def jpy_to_eur(jpy: int) -> int:
@@ -92,13 +109,6 @@ class Listing:
         self.price_eur = jpy_to_eur(self.price_jpy)
 
 
-def _parse_price(text: str) -> Optional[int]:
-    if not text:
-        return None
-    digits = re.sub(r'[^\d]', '', text)
-    return int(digits) if digits else None
-
-
 def _map_condition(raw: str) -> str:
     for jp, fr in CONDITION_MAP.items():
         if jp in raw:
@@ -106,15 +116,106 @@ def _map_condition(raw: str) -> str:
     return raw or 'Non spécifié'
 
 
-def _extract_id(href: str, source: str) -> Optional[str]:
-    """Extract a unique item ID from ZenMarket product URLs."""
-    m = re.search(r'itemId=([^&]+)', href or '')
-    if m:
-        return m.group(1)
-    m = re.search(r'/product/([^/?]+)', href or '')
-    if m:
-        return m.group(1)
-    return None
+def _posted_ago_from_ts(ts: int) -> str:
+    delta = int(time.time()) - ts
+    if delta < 3600:
+        return f'{max(delta // 60, 1)} minutes'
+    if delta < 86400:
+        return f'{delta // 3600} heures'
+    return f'{delta // 86400} jours'
+
+
+# ---------------------------------------------------------------------------
+# Mercari Japan API
+# ---------------------------------------------------------------------------
+
+def _parse_mercari_items(items: list) -> list[Listing]:
+    listings: list[Listing] = []
+    for item in items:
+        try:
+            item_id = item.get('id', '')
+            if not item_id:
+                continue
+
+            title = item.get('name', '') or f'Article {item_id}'
+            price_jpy = int(item.get('price', 0))
+            if price_jpy <= 0:
+                continue
+
+            thumbnails = item.get('thumbnails') or []
+            image_url = thumbnails[0] if thumbnails else ''
+
+            cond = item.get('item_condition')
+            if isinstance(cond, dict):
+                condition_raw = cond.get('name', '')
+            else:
+                cond_id = item.get('item_condition_id', 0)
+                condition_raw = _CONDITION_ID_MAP.get(int(cond_id), '')
+            condition_fr = _map_condition(condition_raw)
+
+            status_raw = item.get('status', 'on_sale')
+            status = 'sold' if status_raw in ('sold_out', 'trading') else 'available'
+
+            created = item.get('created', 0)
+            posted_ago = _posted_ago_from_ts(int(created)) if created else 'Inconnu'
+
+            listings.append(Listing(
+                id=f'mercari_{item_id}',
+                title=title,
+                price_jpy=price_jpy,
+                original_price_jpy=None,
+                condition=condition_raw,
+                condition_fr=condition_fr,
+                status=status,
+                image_url=image_url,
+                url=ZENMARKET_MERCARI_LINK.format(item_id=item_id),
+                source='mercari',
+                posted_ago=posted_ago,
+            ))
+        except Exception as exc:
+            logger.debug('Mercari item parse error: %s', exc)
+    return listings
+
+
+async def _fetch_mercari_api(keyword: str, limit: int = 30, max_retries: int = 3) -> list[Listing]:
+    params = urlencode({'keyword': keyword, 'limit': limit, 'status': 'on_sale'})
+    url = f'{MERCARI_API_URL}?{params}'
+    delay = 2
+
+    async with AsyncSession() as session:
+        for attempt in range(max_retries):
+            try:
+                response = await session.get(
+                    url,
+                    impersonate='chrome120',
+                    headers=_MERCARI_HEADERS,
+                    timeout=30,
+                )
+                response.raise_for_status()
+                data = response.json()
+                # response shape: {"meta": {...}, "items": [...]}
+                items = data.get('items') or data.get('data', {}).get('items', [])
+                return _parse_mercari_items(items)
+            except Exception as exc:
+                logger.warning(
+                    'Mercari API attempt %d/%d failed for "%s": %s',
+                    attempt + 1, max_retries, keyword, exc,
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Rakuma via ZenMarket HTML (legacy — may return 0 results if JS-rendered)
+# ---------------------------------------------------------------------------
+
+def _parse_price(text: str) -> Optional[int]:
+    if not text:
+        return None
+    digits = re.sub(r'[^\d]', '', text)
+    return int(digits) if digits else None
 
 
 def _parse_posted_ago(text: str) -> str:
@@ -127,7 +228,17 @@ def _parse_posted_ago(text: str) -> str:
     return text
 
 
-def _parse_listings_html(html: str, source: str) -> list[Listing]:
+def _extract_id(href: str) -> Optional[str]:
+    m = re.search(r'itemId=([^&]+)', href or '')
+    if m:
+        return m.group(1)
+    m = re.search(r'/product/([^/?]+)', href or '')
+    if m:
+        return m.group(1)
+    return None
+
+
+def _parse_rakuma_html(html: str) -> list[Listing]:
     soup = BeautifulSoup(html, 'html.parser')
     listings: list[Listing] = []
 
@@ -138,7 +249,6 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
         or soup.select('[class*="product"]')
         or soup.select('[class*="item"]')
     )
-
     if not containers:
         containers = [
             a.parent for a in soup.find_all('a', href=re.compile(r'itemId='))
@@ -157,7 +267,7 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
             if href.startswith('/'):
                 href = 'https://zenmarket.jp' + href
 
-            item_id = _extract_id(anchor.get('href', ''), source)
+            item_id = _extract_id(anchor.get('href', ''))
             if not item_id:
                 continue
 
@@ -173,9 +283,8 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
             )
             title = title_el.get_text(strip=True) if title_el else ''
 
-            price_els = card.find_all(
-                class_=re.compile(r'price', re.I)
-            ) or card.find_all(string=re.compile(r'¥'))
+            price_els = card.find_all(class_=re.compile(r'price', re.I)) or \
+                        card.find_all(string=re.compile(r'¥'))
             current_price: Optional[int] = None
             original_price: Optional[int] = None
 
@@ -206,38 +315,34 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
             condition_raw = cond_el.get_text(strip=True) if cond_el else ''
             condition_fr = _map_condition(condition_raw)
 
-            sold_marker = card.find(
-                class_=re.compile(r'sold|soldout|unavailable', re.I)
-            ) or card.find(string=re.compile(r'SOLD|売り切れ|Sold', re.I))
+            sold_marker = card.find(class_=re.compile(r'sold|soldout|unavailable', re.I)) or \
+                          card.find(string=re.compile(r'SOLD|売り切れ|Sold', re.I))
             status = 'sold' if sold_marker else 'available'
 
             time_el = card.find(class_=re.compile(r'time|date|ago|when', re.I))
             posted_ago = _parse_posted_ago(time_el.get_text() if time_el else '')
 
-            listings.append(
-                Listing(
-                    id=f'{source}_{item_id}',
-                    title=title or f'Article {item_id}',
-                    price_jpy=current_price,
-                    original_price_jpy=original_price if original_price and original_price > current_price else None,
-                    condition=condition_raw,
-                    condition_fr=condition_fr,
-                    status=status,
-                    image_url=image_url,
-                    url=href,
-                    source=source,
-                    posted_ago=posted_ago,
-                )
-            )
-
+            listings.append(Listing(
+                id=f'rakuma_{item_id}',
+                title=title or f'Article {item_id}',
+                price_jpy=current_price,
+                original_price_jpy=original_price if original_price and original_price > current_price else None,
+                condition=condition_raw,
+                condition_fr=condition_fr,
+                status=status,
+                image_url=image_url,
+                url=href,
+                source='rakuma',
+                posted_ago=posted_ago,
+            ))
         except Exception as exc:
-            logger.debug('Card parse error: %s', exc)
+            logger.debug('Rakuma card parse error: %s', exc)
 
     return listings
 
 
-async def _fetch_html_curl(url: str, max_retries: int = 3) -> Optional[str]:
-    """Fetch page HTML using curl-cffi, impersonating Chrome to bypass Cloudflare."""
+async def _fetch_rakuma(keyword: str, max_retries: int = 3) -> list[Listing]:
+    url = RAKUMA_SEARCH_URL.format(query=quote(keyword))
     delay = 2
     async with AsyncSession() as session:
         for attempt in range(max_retries):
@@ -245,29 +350,34 @@ async def _fetch_html_curl(url: str, max_retries: int = 3) -> Optional[str]:
                 response = await session.get(
                     url,
                     impersonate='chrome120',
-                    headers=_HEADERS,
+                    headers=_HTML_HEADERS,
                     timeout=30,
                 )
                 response.raise_for_status()
-                return response.text
+                return _parse_rakuma_html(response.text)
             except Exception as exc:
                 logger.warning(
-                    'curl-cffi fetch attempt %d/%d failed for %s: %s',
-                    attempt + 1, max_retries, url, exc,
+                    'Rakuma fetch attempt %d/%d failed for "%s": %s',
+                    attempt + 1, max_retries, keyword, exc,
                 )
                 if attempt < max_retries - 1:
                     await asyncio.sleep(delay)
                     delay *= 2
-    return None
+    return []
 
+
+# ---------------------------------------------------------------------------
+# Public interface
+# ---------------------------------------------------------------------------
 
 async def fetch_listings(keyword: str, source: str, max_retries: int = 3) -> list[Listing]:
-    """Fetch listings for a keyword from a ZenMarket source (mercari or rakuma)."""
-    url = SEARCH_URLS[source].format(query=quote(keyword))
-    html = await _fetch_html_curl(url, max_retries=max_retries)
-    if html is None:
-        logger.error('Failed to fetch %s listings for "%s" after %d attempts', source, keyword, max_retries)
+    """Fetch listings for a keyword from the given source ('mercari' or 'rakuma')."""
+    if source == 'mercari':
+        listings = await _fetch_mercari_api(keyword, max_retries=max_retries)
+    elif source == 'rakuma':
+        listings = await _fetch_rakuma(keyword, max_retries=max_retries)
+    else:
+        logger.error('Unknown source: %s', source)
         return []
-    listings = _parse_listings_html(html, source)
     logger.info('Fetched %d listings for "%s" on %s', len(listings), keyword, source)
     return listings
