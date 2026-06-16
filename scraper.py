@@ -1,5 +1,5 @@
 """
-Mercari Japan scraper — scrapes jp.mercari.com search page HTML directly.
+Mercari Japan scraper — uses Mercari's internal JSON API (v2 POST, v1 GET fallback).
 """
 
 import asyncio
@@ -16,9 +16,25 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+MERCARI_API_V2_URL = 'https://api.mercari.jp/v2/entities:search'
+MERCARI_API_V1_URL = 'https://jp.mercari.com/v1/api/items/search'
 MERCARI_SEARCH_URL = 'https://jp.mercari.com/search?keyword={keyword}&status=on_sale'
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/mercari.aspx?q={query}'
+
+_API_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/124.0.0.0 Safari/537.36'
+    ),
+    'X-Platform': 'web',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'ja-JP,ja;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Origin': 'https://jp.mercari.com',
+    'Referer': 'https://jp.mercari.com/',
+}
 
 _BROWSER_HEADERS = {
     'User-Agent': (
@@ -255,30 +271,80 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
     return listings
 
 
-async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 3) -> list[Listing]:
-    """Fetch listings by scraping the Mercari JP search page HTML."""
-    encoded = quote(keyword)
-    url = MERCARI_SEARCH_URL.format(keyword=encoded)
+def _items_from_api_response(data: dict) -> list[dict]:
+    """Extract the items list from a Mercari API JSON response."""
+    for key in ('items', 'data', 'result'):
+        val = data.get(key)
+        if isinstance(val, list) and val:
+            return val
+    return []
 
+
+async def _fetch_via_v2_api(client: httpx.AsyncClient, keyword: str) -> list[dict]:
+    payload = {
+        'keyword': keyword,
+        'status': ['STATUS_ON_SALE'],
+        'limit': 30,
+    }
+    resp = await client.post(
+        MERCARI_API_V2_URL,
+        json=payload,
+        headers={**_API_HEADERS, 'Content-Type': 'application/json'},
+    )
+    resp.raise_for_status()
+    return _items_from_api_response(resp.json())
+
+
+async def _fetch_via_v1_api(client: httpx.AsyncClient, keyword: str) -> list[dict]:
+    resp = await client.get(
+        MERCARI_API_V1_URL,
+        params={'keyword': keyword, 'status': 'on_sale', 'limit': 30},
+        headers=_API_HEADERS,
+    )
+    resp.raise_for_status()
+    return _items_from_api_response(resp.json())
+
+
+async def _fetch_via_html(client: httpx.AsyncClient, keyword: str) -> list[dict]:
+    url = MERCARI_SEARCH_URL.format(keyword=quote(keyword))
+    resp = await client.get(url, headers=_BROWSER_HEADERS)
+    resp.raise_for_status()
+    html = resp.text
+    items = _items_from_next_data(html)
+    if not items:
+        items = _items_from_html(html)
+    return items
+
+
+async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 3) -> list[Listing]:
+    """Fetch listings via Mercari internal API (v2 → v1 → HTML fallback)."""
     delay = 2
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(
-                timeout=30,
-                headers=_BROWSER_HEADERS,
-                follow_redirects=True,
-            ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                html = response.text
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                items: list[dict] = []
 
-                items = _items_from_next_data(html)
-                if not items:
-                    logger.debug('No __NEXT_DATA__ items for "%s", falling back to HTML parsing', keyword)
-                    items = _items_from_html(html)
+                try:
+                    items = await _fetch_via_v2_api(client, keyword)
+                    if items:
+                        logger.debug('v2 API returned %d items for "%s"', len(items), keyword)
+                except Exception as exc:
+                    logger.debug('v2 API failed for "%s": %s', keyword, exc)
 
                 if not items:
-                    logger.warning('No items found in page for "%s"', keyword)
+                    try:
+                        items = await _fetch_via_v1_api(client, keyword)
+                        if items:
+                            logger.debug('v1 API returned %d items for "%s"', len(items), keyword)
+                    except Exception as exc:
+                        logger.debug('v1 API failed for "%s": %s', keyword, exc)
+
+                if not items:
+                    logger.debug('Both APIs failed for "%s", falling back to HTML', keyword)
+                    items = await _fetch_via_html(client, keyword)
+
+                if not items:
+                    logger.warning('No items found for "%s"', keyword)
 
                 listings = _parse_listings(items, keyword)
                 logger.info('Fetched %d listings for "%s"', len(listings), keyword)
