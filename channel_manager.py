@@ -113,9 +113,9 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
 ]
 
 HELP_TEXT = """
-# 🤖 ZenMarket Bot — Mode d'emploi
+# 🤖 Mercari Japan Bot — Mode d'emploi
 
-Ce bot surveille **Mercari Japan** et **Rakuma** via ZenMarket et publie les nouvelles annonces de maroquinerie de luxe en temps réel.
+Ce bot surveille **Mercari Japan** directement et publie les nouvelles annonces de maroquinerie de luxe en temps réel.
 
 ## 📋 Channels disponibles
 - **#nouveautes-toutes-marques** — Toutes les nouvelles annonces, toutes marques confondues
@@ -132,7 +132,7 @@ Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épin
 ## ⚙️ Configuration
 - Intervalle de vérification : toutes les 90 secondes par marque
 - Filtre prix max : configurable via `MAX_PRICE_YEN` dans .env
-- Sources : ZenMarket (Mercari Japan) + ZenMarket (Rakuma)
+- Source : Mercari Japan API directe
 """
 
 

@@ -1,17 +1,15 @@
 """
-Mercari Japan scraper — uses the official Mercari JP search API.
+Mercari Japan scraper — uses the Mercari JP search API directly.
 """
 
 import asyncio
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
 
-from curl_cffi import requests as cffi_requests
-from curl_cffi.requests import AsyncSession
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +18,8 @@ MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/mercari.aspx?q={query}'
 
 _API_HEADERS = {
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/120.0.0.0 Safari/537.36'
-    ),
     'X-Platform': 'web',
     'Accept': 'application/json',
-    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Origin': 'https://jp.mercari.com',
-    'Referer': 'https://jp.mercari.com/',
 }
 
 CONDITION_MAP = {
@@ -42,7 +32,6 @@ CONDITION_MAP = {
     '全体的に状態が悪い': 'Mauvais état',
 }
 
-# Cached exchange rate (JPY → EUR, refreshed hourly)
 _eur_rate_cache: dict = {'rate': None, 'fetched_at': 0.0}
 _EUR_CACHE_TTL = 3600
 
@@ -52,17 +41,16 @@ def _get_eur_per_jpy() -> float:
     if _eur_rate_cache['rate'] and now - _eur_rate_cache['fetched_at'] < _EUR_CACHE_TTL:
         return _eur_rate_cache['rate']
     try:
-        r = cffi_requests.get(
-            'https://open.er-api.com/v6/latest/JPY',
-            impersonate='chrome120',
-            timeout=10,
-            headers={'User-Agent': 'ZenMarketBot/1.0'},
-        )
-        data = r.json()
-        rate = data['rates']['EUR']
-        _eur_rate_cache['rate'] = rate
-        _eur_rate_cache['fetched_at'] = now
-        return rate
+        with httpx.Client(timeout=10) as client:
+            r = client.get(
+                'https://open.er-api.com/v6/latest/JPY',
+                headers={'User-Agent': 'ZenMarketBot/1.0'},
+            )
+            data = r.json()
+            rate = data['rates']['EUR']
+            _eur_rate_cache['rate'] = rate
+            _eur_rate_cache['fetched_at'] = now
+            return rate
     except Exception as exc:
         logger.warning('Exchange rate fetch failed: %s', exc)
         return 1 / 160.0
@@ -83,7 +71,7 @@ class Listing:
     status: str           # 'available' | 'sold'
     image_url: str
     url: str              # Mercari JP direct link
-    zenmarket_url: str    # ZenMarket search link
+    zenmarket_url: str    # ZenMarket search link for ordering
     source: str           # 'mercari'
     posted_ago: str
     direct_url: Optional[str] = None
@@ -101,7 +89,6 @@ def _map_condition(raw: str) -> str:
 
 
 def _parse_posted_ago(timestamp: Optional[int]) -> str:
-    """Convert a Unix timestamp to a human-readable 'posted ago' string."""
     if not timestamp:
         return 'Inconnu'
     elapsed = int(time.time()) - timestamp
@@ -193,13 +180,8 @@ async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int
     delay = 2
     for attempt in range(max_retries):
         try:
-            async with AsyncSession() as session:
-                response = await session.get(
-                    url,
-                    headers=_API_HEADERS,
-                    impersonate='chrome120',
-                    timeout=30,
-                )
+            async with httpx.AsyncClient(timeout=30, headers=_API_HEADERS) as client:
+                response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
                 listings = _parse_listings(data, keyword)
