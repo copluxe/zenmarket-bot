@@ -4,12 +4,13 @@ search pages for Mercari Japan and Rakuma listings.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
@@ -22,6 +23,11 @@ ZENMARKET_MERCARI_SEARCH = 'https://zenmarket.jp/mercari.aspx?q={query}'
 ZENMARKET_MERCARI_LINK = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
 MERCARI_DIRECT_LINK = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_RAKUMA_SEARCH = 'https://zenmarket.jp/rakuma.aspx?q={query}'
+
+# AJAX endpoints that return HTTP 200 with listing data
+ZENMARKET_MERCARI_ITEMS_ASHX = 'https://zenmarket.jp/mercariitems.ashx?q={query}'
+ZENMARKET_MERCARI_HANDLER = 'https://zenmarket.jp/MercariHandler.ashx?q={query}'
+ZENMARKET_SEARCH_HANDLER = 'https://zenmarket.jp/SearchHandler.ashx?q={query}&source=mercari'
 
 CONDITION_MAP = {
     '新品、未使用':       'Neuf',
@@ -41,6 +47,18 @@ _HTML_HEADERS = {
     ),
     'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+}
+
+_AJAX_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36'
+    ),
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Referer': 'https://zenmarket.jp/mercari.aspx',
 }
 
 # Cached exchange rate (JPY per EUR, refreshed hourly)
@@ -165,6 +183,147 @@ async def _zenmarket_fetch(target_url: str, max_retries: int = 3) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ZenMarket AJAX fetch & JSON parser
+# ---------------------------------------------------------------------------
+
+async def _zenmarket_ajax_fetch(target_url: str) -> Optional[Any]:
+    """Fetch a ZenMarket .ashx AJAX endpoint and return parsed JSON, or None on failure."""
+    session_cookie = os.getenv('ZENMARKET_SESSION_COOKIE', '')
+    headers = {
+        **_AJAX_HEADERS,
+        'Cookie': session_cookie,
+    }
+    try:
+        async with AsyncSession() as session:
+            response = await session.get(
+                target_url,
+                headers=headers,
+                impersonate='chrome120',
+                timeout=30,
+            )
+            response.raise_for_status()
+            text = response.text.strip()
+            if not text:
+                return None
+            if text[0] in ('{', '['):
+                return json.loads(text)
+            content_type = response.headers.get('Content-Type', '')
+            if 'json' in content_type or 'javascript' in content_type:
+                return json.loads(text)
+    except Exception as exc:
+        logger.debug('AJAX fetch failed for "%s": %s', target_url, exc)
+    return None
+
+
+def _parse_ajax_listings(data: Any, source: str) -> list[Listing]:
+    """Map JSON from an AJAX endpoint to Listing objects.
+
+    Handles common shapes: top-level list, or dict with an 'items'/'data'/
+    'results'/'listings'/'products'/'list' key that contains a list.
+    """
+    if isinstance(data, dict):
+        for key in ('items', 'data', 'results', 'listings', 'products', 'list'):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+        else:
+            for v in data.values():
+                if isinstance(v, list):
+                    data = v
+                    break
+
+    if not isinstance(data, list):
+        return []
+
+    listings: list[Listing] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            item_id = str(
+                item.get('id') or item.get('itemId') or item.get('item_id') or
+                item.get('code') or item.get('productId') or ''
+            ).strip()
+            if not item_id:
+                continue
+
+            title = str(
+                item.get('name') or item.get('title') or item.get('productName') or
+                item.get('caption') or item.get('description') or ''
+            ).strip()
+
+            price_raw = (
+                item.get('price') or item.get('currentPrice') or item.get('sellPrice') or
+                item.get('priceJpy') or item.get('price_jpy') or 0
+            )
+            current_price = (
+                price_raw if isinstance(price_raw, int)
+                else _parse_price(str(price_raw))
+            )
+            if not current_price:
+                continue
+
+            orig_raw = (
+                item.get('originalPrice') or item.get('original_price') or
+                item.get('beforePrice') or item.get('regularPrice')
+            )
+            original_price: Optional[int] = None
+            if orig_raw:
+                original_price = (
+                    orig_raw if isinstance(orig_raw, int) else _parse_price(str(orig_raw))
+                )
+                if original_price and original_price <= current_price:
+                    original_price = None
+
+            image_url = str(
+                item.get('imageUrl') or item.get('image_url') or item.get('image') or
+                item.get('thumbnailUrl') or item.get('thumbnail') or item.get('photo') or ''
+            ).strip()
+
+            condition_raw = str(
+                item.get('condition') or item.get('itemCondition') or
+                item.get('conditionName') or ''
+            ).strip()
+            condition_fr = _map_condition(condition_raw)
+
+            is_sold = item.get('isSold') or item.get('is_sold') or item.get('sold') or False
+            status_raw = str(item.get('status') or item.get('itemStatus') or '').lower()
+            status = 'sold' if (is_sold or 'sold' in status_raw or '売り切れ' in status_raw) else 'available'
+
+            time_raw = str(
+                item.get('postedAt') or item.get('posted_at') or item.get('createdAt') or
+                item.get('time') or item.get('date') or ''
+            ).strip()
+            posted_ago = _parse_posted_ago(time_raw)
+
+            if source == 'mercari':
+                zen_url = ZENMARKET_MERCARI_LINK.format(item_id=item_id)
+                direct_url = MERCARI_DIRECT_LINK.format(item_id=item_id)
+            else:
+                zen_url = str(item.get('url') or item.get('link') or ZENMARKET_MERCARI_LINK.format(item_id=item_id))
+                direct_url = None
+
+            listings.append(Listing(
+                id=f'{source}_{item_id}',
+                title=title or f'Article {item_id}',
+                price_jpy=current_price,
+                original_price_jpy=original_price,
+                condition=condition_raw,
+                condition_fr=condition_fr,
+                status=status,
+                image_url=image_url,
+                url=zen_url,
+                source=source,
+                posted_ago=posted_ago,
+                direct_url=direct_url,
+            ))
+        except Exception as exc:
+            logger.debug('AJAX item parse error: %s', exc)
+
+    return listings
+
+
+# ---------------------------------------------------------------------------
 # ZenMarket HTML parser (Mercari & Rakuma share the same page structure)
 # ---------------------------------------------------------------------------
 
@@ -284,7 +443,29 @@ def _parse_zenmarket_html(html: str, source: str) -> list[Listing]:
 # ---------------------------------------------------------------------------
 
 async def _fetch_mercari(keyword: str, max_retries: int = 3) -> list[Listing]:
-    url = ZENMARKET_MERCARI_SEARCH.format(query=quote(keyword))
+    encoded = quote(keyword)
+
+    # Try the three AJAX .ashx endpoints first (lighter, no HTML parsing)
+    ajax_endpoints = [
+        ZENMARKET_MERCARI_ITEMS_ASHX.format(query=encoded),
+        ZENMARKET_MERCARI_HANDLER.format(query=encoded),
+        ZENMARKET_SEARCH_HANDLER.format(query=encoded),
+    ]
+    for endpoint in ajax_endpoints:
+        data = await _zenmarket_ajax_fetch(endpoint)
+        if data is not None:
+            listings = _parse_ajax_listings(data, 'mercari')
+            if listings:
+                logger.info(
+                    'AJAX endpoint %s returned %d listings for "%s"',
+                    endpoint, len(listings), keyword,
+                )
+                return listings
+            logger.debug('AJAX endpoint %s returned no parseable listings for "%s"', endpoint, keyword)
+
+    # Fall back to full-page HTML scraping
+    logger.debug('All AJAX endpoints yielded nothing for "%s", falling back to HTML', keyword)
+    url = ZENMARKET_MERCARI_SEARCH.format(query=encoded)
     html = await _zenmarket_fetch(url, max_retries=max_retries)
     if not html:
         return []
