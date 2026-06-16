@@ -1,6 +1,6 @@
 """
 ZenMarket scraper for Mercari Japan and Rakuma search results.
-Uses async Playwright to bypass Cloudflare protection.
+Uses curl-cffi to impersonate a real browser at the TLS level, bypassing Cloudflare.
 """
 
 import asyncio
@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
 
-import requests
+from curl_cffi import requests as cffi_requests
+from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,16 @@ CONDITION_MAP = {
     '全体的に状態が悪い': 'Mauvais état',
 }
 
+_HEADERS = {
+    'User-Agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/120.0.0.0 Safari/537.36'
+    ),
+    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+}
+
 # Cached exchange rate (JPY per EUR, refreshed hourly)
 _eur_rate_cache: dict = {'rate': None, 'fetched_at': 0.0}
 _EUR_CACHE_TTL = 3600
@@ -43,8 +53,9 @@ def _get_eur_per_jpy() -> float:
     if _eur_rate_cache['rate'] and now - _eur_rate_cache['fetched_at'] < _EUR_CACHE_TTL:
         return _eur_rate_cache['rate']
     try:
-        r = requests.get(
+        r = cffi_requests.get(
             'https://open.er-api.com/v6/latest/JPY',
+            impersonate='chrome120',
             timeout=10,
             headers={'User-Agent': 'ZenMarketBot/1.0'},
         )
@@ -225,70 +236,35 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
     return listings
 
 
-async def _fetch_html_playwright(url: str, max_retries: int = 3) -> Optional[str]:
-    """Fetch page HTML using Playwright (headless Chromium) to bypass Cloudflare."""
+async def _fetch_html_curl(url: str, max_retries: int = 3) -> Optional[str]:
+    """Fetch page HTML using curl-cffi, impersonating Chrome to bypass Cloudflare."""
     delay = 2
-    for attempt in range(max_retries):
-        try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(
-                    headless=True,
-                    args=[
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-blink-features=AutomationControlled',
-                    ],
+    async with AsyncSession() as session:
+        for attempt in range(max_retries):
+            try:
+                response = await session.get(
+                    url,
+                    impersonate='chrome120',
+                    headers=_HEADERS,
+                    timeout=30,
                 )
-                context = await browser.new_context(
-                    locale='ja-JP',
-                    timezone_id='Asia/Tokyo',
-                    user_agent=(
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                        'AppleWebKit/537.36 (KHTML, like Gecko) '
-                        'Chrome/120.0.0.0 Safari/537.36'
-                    ),
-                    extra_http_headers={
-                        'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
-                    },
+                response.raise_for_status()
+                return response.text
+            except Exception as exc:
+                logger.warning(
+                    'curl-cffi fetch attempt %d/%d failed for %s: %s',
+                    attempt + 1, max_retries, url, exc,
                 )
-                page = await context.new_page()
-
-                # Hide webdriver flag to avoid bot detection
-                await page.add_init_script(
-                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-                )
-
-                await page.goto(url, wait_until='domcontentloaded', timeout=30_000)
-
-                # Wait for product cards to appear; fall back to networkidle if not
-                try:
-                    await page.wait_for_selector(
-                        '.col-6, .product-container, .item-box, [class*="product"], [class*="item"]',
-                        timeout=10_000,
-                    )
-                except PlaywrightTimeout:
-                    await page.wait_for_load_state('networkidle', timeout=15_000)
-
-                html = await page.content()
-                await browser.close()
-                return html
-
-        except PlaywrightTimeout as exc:
-            logger.warning('Playwright timeout attempt %d/%d for %s: %s', attempt + 1, max_retries, url, exc)
-        except Exception as exc:
-            logger.warning('Playwright fetch attempt %d/%d failed for %s: %s', attempt + 1, max_retries, url, exc)
-
-        if attempt < max_retries - 1:
-            await asyncio.sleep(delay)
-            delay *= 2
-
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(delay)
+                    delay *= 2
     return None
 
 
 async def fetch_listings(keyword: str, source: str, max_retries: int = 3) -> list[Listing]:
     """Fetch listings for a keyword from a ZenMarket source (mercari or rakuma)."""
     url = SEARCH_URLS[source].format(query=quote(keyword))
-    html = await _fetch_html_playwright(url, max_retries=max_retries)
+    html = await _fetch_html_curl(url, max_retries=max_retries)
     if html is None:
         logger.error('Failed to fetch %s listings for "%s" after %d attempts', source, keyword, max_retries)
         return []
