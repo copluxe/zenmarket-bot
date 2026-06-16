@@ -1,7 +1,9 @@
 """
 ZenMarket scraper for Mercari Japan and Rakuma search results.
+Uses async Playwright to bypass Cloudflare protection.
 """
 
+import asyncio
 import logging
 import re
 import time
@@ -11,20 +13,9 @@ from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
-
-HEADERS = {
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/120.0.0.0 Safari/537.36'
-    ),
-    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-}
 
 SEARCH_URLS = {
     'mercari': 'https://zenmarket.jp/mercari.aspx?q={query}',
@@ -119,7 +110,6 @@ def _parse_posted_ago(text: str) -> str:
     if not text:
         return 'Inconnu'
     text = text.strip()
-    # Convert common Japanese time expressions
     text = re.sub(r'(\d+)分前', r'\1 minutes', text)
     text = re.sub(r'(\d+)時間前', r'\1 heures', text)
     text = re.sub(r'(\d+)日前', r'\1 jours', text)
@@ -130,8 +120,6 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
     soup = BeautifulSoup(html, 'html.parser')
     listings: list[Listing] = []
 
-    # ZenMarket uses Bootstrap grid — product cards share common patterns.
-    # Try multiple container selectors in order of specificity.
     containers = (
         soup.select('.col-6.col-sm-6.col-md-4.col-lg-3')
         or soup.select('.product-container')
@@ -141,7 +129,6 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
     )
 
     if not containers:
-        # Fallback: any anchor wrapping an image and a price
         containers = [
             a.parent for a in soup.find_all('a', href=re.compile(r'itemId='))
             if a.find('img')
@@ -149,7 +136,6 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
 
     for card in containers:
         try:
-            # --- URL & ID ---
             anchor = card.find('a', href=re.compile(r'itemId=|/product/'))
             if not anchor:
                 anchor = card if card.name == 'a' else None
@@ -164,13 +150,11 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
             if not item_id:
                 continue
 
-            # --- Image ---
             img = card.find('img')
             image_url = ''
             if img:
                 image_url = img.get('data-src') or img.get('src') or ''
 
-            # --- Title ---
             title_el = (
                 card.find(class_=re.compile(r'(name|title|caption|label)', re.I))
                 or card.find('p')
@@ -178,14 +162,12 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
             )
             title = title_el.get_text(strip=True) if title_el else ''
 
-            # --- Prices ---
             price_els = card.find_all(
                 class_=re.compile(r'price', re.I)
             ) or card.find_all(string=re.compile(r'¥'))
             current_price: Optional[int] = None
             original_price: Optional[int] = None
 
-            # Attempt structured extraction first
             price_current_el = card.find(class_=re.compile(r'price.?(current|now|sale)', re.I))
             price_orig_el = card.find(class_=re.compile(r'price.?(original|old|before|was)', re.I))
             if price_current_el:
@@ -209,18 +191,15 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
             if not current_price:
                 continue
 
-            # --- Condition ---
             cond_el = card.find(class_=re.compile(r'condition|status|state', re.I))
             condition_raw = cond_el.get_text(strip=True) if cond_el else ''
             condition_fr = _map_condition(condition_raw)
 
-            # --- Status (sold / available) ---
             sold_marker = card.find(
                 class_=re.compile(r'sold|soldout|unavailable', re.I)
             ) or card.find(string=re.compile(r'SOLD|売り切れ|Sold', re.I))
             status = 'sold' if sold_marker else 'available'
 
-            # --- Posted ago ---
             time_el = card.find(class_=re.compile(r'time|date|ago|when', re.I))
             posted_ago = _parse_posted_ago(time_el.get_text() if time_el else '')
 
@@ -246,25 +225,73 @@ def _parse_listings_html(html: str, source: str) -> list[Listing]:
     return listings
 
 
-def fetch_listings(keyword: str, source: str, max_retries: int = 3) -> list[Listing]:
-    """Fetch listings for a keyword from a ZenMarket source (mercari or rakuma)."""
-    url = SEARCH_URLS[source].format(query=quote(keyword))
+async def _fetch_html_playwright(url: str, max_retries: int = 3) -> Optional[str]:
+    """Fetch page HTML using Playwright (headless Chromium) to bypass Cloudflare."""
     delay = 2
     for attempt in range(max_retries):
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=20)
-            resp.raise_for_status()
-            listings = _parse_listings_html(resp.text, source)
-            logger.info(
-                'Fetched %d listings for "%s" on %s', len(listings), keyword, source
-            )
-            return listings
-        except requests.RequestException as exc:
-            logger.warning(
-                'Fetch attempt %d/%d failed for %s %s: %s',
-                attempt + 1, max_retries, source, keyword, exc,
-            )
-            if attempt < max_retries - 1:
-                time.sleep(delay)
-                delay *= 2
-    return []
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-blink-features=AutomationControlled',
+                    ],
+                )
+                context = await browser.new_context(
+                    locale='ja-JP',
+                    timezone_id='Asia/Tokyo',
+                    user_agent=(
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                        'AppleWebKit/537.36 (KHTML, like Gecko) '
+                        'Chrome/120.0.0.0 Safari/537.36'
+                    ),
+                    extra_http_headers={
+                        'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+                    },
+                )
+                page = await context.new_page()
+
+                # Hide webdriver flag to avoid bot detection
+                await page.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                )
+
+                await page.goto(url, wait_until='domcontentloaded', timeout=30_000)
+
+                # Wait for product cards to appear; fall back to networkidle if not
+                try:
+                    await page.wait_for_selector(
+                        '.col-6, .product-container, .item-box, [class*="product"], [class*="item"]',
+                        timeout=10_000,
+                    )
+                except PlaywrightTimeout:
+                    await page.wait_for_load_state('networkidle', timeout=15_000)
+
+                html = await page.content()
+                await browser.close()
+                return html
+
+        except PlaywrightTimeout as exc:
+            logger.warning('Playwright timeout attempt %d/%d for %s: %s', attempt + 1, max_retries, url, exc)
+        except Exception as exc:
+            logger.warning('Playwright fetch attempt %d/%d failed for %s: %s', attempt + 1, max_retries, url, exc)
+
+        if attempt < max_retries - 1:
+            await asyncio.sleep(delay)
+            delay *= 2
+
+    return None
+
+
+async def fetch_listings(keyword: str, source: str, max_retries: int = 3) -> list[Listing]:
+    """Fetch listings for a keyword from a ZenMarket source (mercari or rakuma)."""
+    url = SEARCH_URLS[source].format(query=quote(keyword))
+    html = await _fetch_html_playwright(url, max_retries=max_retries)
+    if html is None:
+        logger.error('Failed to fetch %s listings for "%s" after %d attempts', source, keyword, max_retries)
+        return []
+    listings = _parse_listings_html(html, source)
+    logger.info('Fetched %d listings for "%s" on %s', len(listings), keyword, source)
+    return listings

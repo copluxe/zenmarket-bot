@@ -123,7 +123,7 @@ class ZenMarketBot(discord.Client):
         self, brand_key: str, brand_info: dict, source: str
     ):
         keyword = brand_info['keyword']
-        listings = await asyncio.to_thread(fetch_listings, keyword, source)
+        listings = await fetch_listings(keyword, source)
 
         for listing in listings:
             # Price filter
