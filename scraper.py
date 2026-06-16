@@ -138,14 +138,14 @@ async def _scraperapi_fetch(target_url: str, max_retries: int = 3) -> str:
     if not api_key:
         logger.error('SCRAPER_API_KEY is not set — cannot fetch via ScraperAPI')
         return ''
-    endpoint = f'{SCRAPER_API_BASE}?api_key={api_key}&url={quote(target_url, safe="")}'
+    endpoint = f'{SCRAPER_API_BASE}?api_key={api_key}&url={quote(target_url, safe="")}&render=true'
     delay = 2
     for attempt in range(max_retries):
         try:
             async with aiohttp.ClientSession(headers=_HTML_HEADERS) as session:
                 async with session.get(
                     endpoint,
-                    timeout=aiohttp.ClientTimeout(total=60),
+                    timeout=aiohttp.ClientTimeout(total=90),
                 ) as response:
                     response.raise_for_status()
                     return await response.text()
