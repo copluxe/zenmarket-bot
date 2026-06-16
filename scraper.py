@@ -1,33 +1,28 @@
 """
-ZenMarket scraper — Mercari Japan listings fetched directly from the Mercari
-search API; ZenMarket item links are constructed from the returned item IDs.
-Rakuma listings still use the ZenMarket HTML scrape path (legacy).
+ZenMarket scraper — uses ScraperAPI to fetch ZenMarket search pages for
+Mercari Japan and Rakuma listings.
 """
 
 import asyncio
-import base64
-import json
 import logging
+import os
 import re
 import time
-import uuid as _uuid
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
 
-from ecdsa import SigningKey, NIST256p
-from ecdsa.util import sigencode_string
-from curl_cffi import requests as cffi_requests
-from curl_cffi.requests import AsyncSession
+import aiohttp
 from bs4 import BeautifulSoup
+from curl_cffi import requests as cffi_requests
 
 logger = logging.getLogger(__name__)
 
-MERCARI_API_URL = 'https://api.mercari.jp/v2/entities:search'
+SCRAPER_API_BASE = 'http://api.scraperapi.com'
+ZENMARKET_MERCARI_SEARCH = 'https://zenmarket.jp/mercari.aspx?q={query}'
 ZENMARKET_MERCARI_LINK = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
 MERCARI_DIRECT_LINK = 'https://jp.mercari.com/item/{item_id}'
-
-RAKUMA_SEARCH_URL = 'https://zenmarket.jp/rakuma.aspx?q={query}'
+ZENMARKET_RAKUMA_SEARCH = 'https://zenmarket.jp/rakuma.aspx?q={query}'
 
 CONDITION_MAP = {
     '新品、未使用':       'Neuf',
@@ -38,56 +33,6 @@ CONDITION_MAP = {
     '傷や汚れあり':       'État correct',
     '全体的に状態が悪い': 'Mauvais état',
 }
-
-# Mercari condition IDs (fallback when condition object is absent)
-_CONDITION_ID_MAP = {
-    1: '新品、未使用',
-    2: '未使用に近い',
-    3: '目立つ傷や汚れなし',
-    4: 'やや傷や汚れあり',
-    5: '傷や汚れあり',
-    6: '全体的に状態が悪い',
-}
-
-_MERCARI_HEADERS = {
-    'X-Platform': 'web',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Encoding': 'deflate, gzip',
-    'Accept-Language': 'ja-JP,ja;q=0.9',
-    'Content-Type': 'application/json; charset=utf-8',
-    'Origin': 'https://jp.mercari.com',
-    'Referer': 'https://jp.mercari.com/',
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/125.0.0.0 Safari/537.36'
-    ),
-}
-
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
-
-
-def _generate_dpop(method: str, url: str) -> str:
-    """Generate a DPoP JWT signed with a fresh ECDSA P-256 key pair."""
-    sk = SigningKey.generate(curve=NIST256p)
-    vk = sk.get_verifying_key()
-    pub_key = vk.to_string()
-    x = _b64url(pub_key[:32])
-    y = _b64url(pub_key[32:])
-    jwk = {'crv': 'P-256', 'kty': 'EC', 'x': x, 'y': y}
-    header_json = json.dumps({'typ': 'dpop+jwt', 'alg': 'ES256', 'jwk': jwk}, separators=(',', ':'))
-    payload_json = json.dumps({
-        'iat': int(time.time()),
-        'jti': str(_uuid.uuid4()),
-        'htu': url,
-        'htm': method.upper(),
-    }, separators=(',', ':'))
-    signing_input = f'{_b64url(header_json.encode())}.{_b64url(payload_json.encode())}'
-    sig_bytes = sk.sign(signing_input.encode('utf-8'), sigencode=sigencode_string)
-    return f'{signing_input}.{_b64url(sig_bytes)}'
-
 
 _HTML_HEADERS = {
     'User-Agent': (
@@ -156,127 +101,6 @@ def _map_condition(raw: str) -> str:
     return raw or 'Non spécifié'
 
 
-def _posted_ago_from_ts(ts: int) -> str:
-    delta = int(time.time()) - ts
-    if delta < 3600:
-        return f'{max(delta // 60, 1)} minutes'
-    if delta < 86400:
-        return f'{delta // 3600} heures'
-    return f'{delta // 86400} jours'
-
-
-# ---------------------------------------------------------------------------
-# Mercari Japan API
-# ---------------------------------------------------------------------------
-
-def _parse_mercari_items(items: list) -> list[Listing]:
-    listings: list[Listing] = []
-    for item in items:
-        try:
-            item_id = item.get('id', '')
-            if not item_id:
-                continue
-
-            title = item.get('name', '') or f'Article {item_id}'
-            price_jpy = int(item.get('price', 0))
-            if price_jpy <= 0:
-                continue
-
-            thumbnails = item.get('thumbnails') or []
-            image_url = thumbnails[0] if thumbnails else ''
-
-            cond = item.get('item_condition')
-            if isinstance(cond, dict):
-                condition_raw = cond.get('name', '')
-            else:
-                cond_id = item.get('item_condition_id', 0)
-                condition_raw = _CONDITION_ID_MAP.get(int(cond_id), '')
-            condition_fr = _map_condition(condition_raw)
-
-            status_raw = item.get('status', 'on_sale')
-            status = 'sold' if status_raw in ('sold_out', 'trading') else 'available'
-
-            created = item.get('created', 0)
-            posted_ago = _posted_ago_from_ts(int(created)) if created else 'Inconnu'
-
-            listings.append(Listing(
-                id=f'mercari_{item_id}',
-                title=title,
-                price_jpy=price_jpy,
-                original_price_jpy=None,
-                condition=condition_raw,
-                condition_fr=condition_fr,
-                status=status,
-                image_url=image_url,
-                url=ZENMARKET_MERCARI_LINK.format(item_id=item_id),
-                source='mercari',
-                posted_ago=posted_ago,
-                direct_url=MERCARI_DIRECT_LINK.format(item_id=item_id),
-            ))
-        except Exception as exc:
-            logger.debug('Mercari item parse error: %s', exc)
-    return listings
-
-
-async def _fetch_mercari_api(keyword: str, limit: int = 30, max_retries: int = 3) -> list[Listing]:
-    body = {
-        'userId': '',
-        'pageSize': limit,
-        'pageToken': '',
-        'searchSessionId': str(_uuid.uuid4()),
-        'indexRouting': 'INDEX_ROUTING_UNSPECIFIED',
-        'thumbnailTypes': [],
-        'searchCondition': {
-            'keyword': keyword,
-            'sort': 'SORT_CREATED_TIME',
-            'order': 'ORDER_DESC',
-            'status': ['STATUS_ON_SALE'],
-            'sizeId': [], 'categoryId': [], 'brandId': [], 'sellerId': [],
-            'priceMin': 0, 'priceMax': 0,
-            'itemConditionId': [], 'shippingPayerId': [],
-            'shippingFromArea': [], 'shippingMethod': [],
-            'colorId': [], 'hasCoupon': False,
-            'attributes': [], 'itemTypes': [], 'skuIds': [],
-            'excludeKeyword': '',
-        },
-        'defaultDatasets': [],
-        'serviceFrom': 'suruga',
-    }
-    delay = 2
-
-    async with AsyncSession() as session:
-        for attempt in range(max_retries):
-            try:
-                headers = dict(_MERCARI_HEADERS)
-                headers['DPoP'] = _generate_dpop('POST', MERCARI_API_URL)
-
-                response = await session.post(
-                    MERCARI_API_URL,
-                    impersonate='chrome120',
-                    headers=headers,
-                    json=body,
-                    timeout=30,
-                )
-                response.raise_for_status()
-                data = response.json()
-                # v2 response shape: {"meta": {...}, "items": [...]}
-                items = data.get('items') or data.get('data', {}).get('items', [])
-                return _parse_mercari_items(items)
-            except Exception as exc:
-                logger.warning(
-                    'Mercari API attempt %d/%d failed for "%s": %s',
-                    attempt + 1, max_retries, keyword, exc,
-                )
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(delay)
-                    delay *= 2
-    return []
-
-
-# ---------------------------------------------------------------------------
-# Rakuma via ZenMarket HTML (legacy — may return 0 results if JS-rendered)
-# ---------------------------------------------------------------------------
-
 def _parse_price(text: str) -> Optional[int]:
     if not text:
         return None
@@ -295,7 +119,7 @@ def _parse_posted_ago(text: str) -> str:
 
 
 def _extract_id(href: str) -> Optional[str]:
-    m = re.search(r'itemId=([^&]+)', href or '')
+    m = re.search(r'[Ii]tem[Ii]d=([^&]+)', href or '')
     if m:
         return m.group(1)
     m = re.search(r'/product/([^/?]+)', href or '')
@@ -304,7 +128,43 @@ def _extract_id(href: str) -> Optional[str]:
     return None
 
 
-def _parse_rakuma_html(html: str) -> list[Listing]:
+# ---------------------------------------------------------------------------
+# ScraperAPI fetch
+# ---------------------------------------------------------------------------
+
+async def _scraperapi_fetch(target_url: str, max_retries: int = 3) -> str:
+    """Fetch target_url through ScraperAPI, returns HTML text or empty string on failure."""
+    api_key = os.getenv('SCRAPER_API_KEY', '')
+    if not api_key:
+        logger.error('SCRAPER_API_KEY is not set — cannot fetch via ScraperAPI')
+        return ''
+    endpoint = f'{SCRAPER_API_BASE}?api_key={api_key}&url={quote(target_url, safe="")}'
+    delay = 2
+    for attempt in range(max_retries):
+        try:
+            async with aiohttp.ClientSession(headers=_HTML_HEADERS) as session:
+                async with session.get(
+                    endpoint,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                ) as response:
+                    response.raise_for_status()
+                    return await response.text()
+        except Exception as exc:
+            logger.warning(
+                'ScraperAPI attempt %d/%d for "%s": %s',
+                attempt + 1, max_retries, target_url, exc,
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay *= 2
+    return ''
+
+
+# ---------------------------------------------------------------------------
+# ZenMarket HTML parser (Mercari & Rakuma share the same page structure)
+# ---------------------------------------------------------------------------
+
+def _parse_zenmarket_html(html: str, source: str) -> list[Listing]:
     soup = BeautifulSoup(html, 'html.parser')
     listings: list[Listing] = []
 
@@ -317,13 +177,13 @@ def _parse_rakuma_html(html: str) -> list[Listing]:
     )
     if not containers:
         containers = [
-            a.parent for a in soup.find_all('a', href=re.compile(r'itemId='))
+            a.parent for a in soup.find_all('a', href=re.compile(r'[Ii]tem[Ii]d='))
             if a.find('img')
         ]
 
     for card in containers:
         try:
-            anchor = card.find('a', href=re.compile(r'itemId=|/product/'))
+            anchor = card.find('a', href=re.compile(r'[Ii]tem[Ii]d=|/product/'))
             if not anchor:
                 anchor = card if card.name == 'a' else None
             if not anchor:
@@ -388,8 +248,15 @@ def _parse_rakuma_html(html: str) -> list[Listing]:
             time_el = card.find(class_=re.compile(r'time|date|ago|when', re.I))
             posted_ago = _parse_posted_ago(time_el.get_text() if time_el else '')
 
+            if source == 'mercari':
+                zen_url = ZENMARKET_MERCARI_LINK.format(item_id=item_id)
+                direct_url = MERCARI_DIRECT_LINK.format(item_id=item_id)
+            else:
+                zen_url = href
+                direct_url = None
+
             listings.append(Listing(
-                id=f'rakuma_{item_id}',
+                id=f'{source}_{item_id}',
                 title=title or f'Article {item_id}',
                 price_jpy=current_price,
                 original_price_jpy=original_price if original_price and original_price > current_price else None,
@@ -397,39 +264,41 @@ def _parse_rakuma_html(html: str) -> list[Listing]:
                 condition_fr=condition_fr,
                 status=status,
                 image_url=image_url,
-                url=href,
-                source='rakuma',
+                url=zen_url,
+                source=source,
                 posted_ago=posted_ago,
+                direct_url=direct_url,
             ))
         except Exception as exc:
-            logger.debug('Rakuma card parse error: %s', exc)
+            logger.debug('%s card parse error: %s', source, exc)
 
     return listings
 
 
+# ---------------------------------------------------------------------------
+# Source-specific fetch functions
+# ---------------------------------------------------------------------------
+
+async def _fetch_mercari(keyword: str, max_retries: int = 3) -> list[Listing]:
+    url = ZENMARKET_MERCARI_SEARCH.format(query=quote(keyword))
+    html = await _scraperapi_fetch(url, max_retries=max_retries)
+    if not html:
+        return []
+    listings = _parse_zenmarket_html(html, 'mercari')
+    if not listings:
+        logger.warning('Mercari ZenMarket page returned no listings for "%s"', keyword)
+    return listings
+
+
 async def _fetch_rakuma(keyword: str, max_retries: int = 3) -> list[Listing]:
-    url = RAKUMA_SEARCH_URL.format(query=quote(keyword))
-    delay = 2
-    async with AsyncSession() as session:
-        for attempt in range(max_retries):
-            try:
-                response = await session.get(
-                    url,
-                    impersonate='chrome120',
-                    headers=_HTML_HEADERS,
-                    timeout=30,
-                )
-                response.raise_for_status()
-                return _parse_rakuma_html(response.text)
-            except Exception as exc:
-                logger.warning(
-                    'Rakuma fetch attempt %d/%d failed for "%s": %s',
-                    attempt + 1, max_retries, keyword, exc,
-                )
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(delay)
-                    delay *= 2
-    return []
+    url = ZENMARKET_RAKUMA_SEARCH.format(query=quote(keyword))
+    html = await _scraperapi_fetch(url, max_retries=max_retries)
+    if not html:
+        return []
+    listings = _parse_zenmarket_html(html, 'rakuma')
+    if not listings:
+        logger.warning('Rakuma ZenMarket page returned no listings for "%s"', keyword)
+    return listings
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +308,7 @@ async def _fetch_rakuma(keyword: str, max_retries: int = 3) -> list[Listing]:
 async def fetch_listings(keyword: str, source: str, max_retries: int = 3) -> list[Listing]:
     """Fetch listings for a keyword from the given source ('mercari' or 'rakuma')."""
     if source == 'mercari':
-        listings = await _fetch_mercari_api(keyword, max_retries=max_retries)
+        listings = await _fetch_mercari(keyword, max_retries=max_retries)
     elif source == 'rakuma':
         listings = await _fetch_rakuma(keyword, max_retries=max_retries)
     else:
