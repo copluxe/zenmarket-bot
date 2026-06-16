@@ -24,10 +24,9 @@ ZENMARKET_MERCARI_LINK = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
 MERCARI_DIRECT_LINK = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_RAKUMA_SEARCH = 'https://zenmarket.jp/rakuma.aspx?q={query}'
 
-# AJAX endpoints that return HTTP 200 with listing data
-ZENMARKET_MERCARI_ITEMS_ASHX = 'https://zenmarket.jp/mercariitems.ashx?q={query}'
+# AJAX endpoints
 ZENMARKET_MERCARI_HANDLER = 'https://zenmarket.jp/MercariHandler.ashx?q={query}'
-ZENMARKET_SEARCH_HANDLER = 'https://zenmarket.jp/SearchHandler.ashx?q={query}&source=mercari'
+ZENMARKET_RAKUMA_HANDLER = 'https://zenmarket.jp/SearchHandler.ashx?q={query}&source=rakuma'
 
 CONDITION_MAP = {
     '新品、未使用':       'Neuf',
@@ -439,65 +438,64 @@ def _parse_zenmarket_html(html: str, source: str) -> list[Listing]:
 
 
 # ---------------------------------------------------------------------------
-# Source-specific fetch functions
-# ---------------------------------------------------------------------------
-
-async def _fetch_mercari(keyword: str, max_retries: int = 3) -> list[Listing]:
-    encoded = quote(keyword)
-
-    # Try the three AJAX .ashx endpoints first (lighter, no HTML parsing)
-    ajax_endpoints = [
-        ZENMARKET_MERCARI_ITEMS_ASHX.format(query=encoded),
-        ZENMARKET_MERCARI_HANDLER.format(query=encoded),
-        ZENMARKET_SEARCH_HANDLER.format(query=encoded),
-    ]
-    for endpoint in ajax_endpoints:
-        data = await _zenmarket_ajax_fetch(endpoint)
-        if data is not None:
-            listings = _parse_ajax_listings(data, 'mercari')
-            if listings:
-                logger.info(
-                    'AJAX endpoint %s returned %d listings for "%s"',
-                    endpoint, len(listings), keyword,
-                )
-                return listings
-            logger.debug('AJAX endpoint %s returned no parseable listings for "%s"', endpoint, keyword)
-
-    # Fall back to full-page HTML scraping
-    logger.debug('All AJAX endpoints yielded nothing for "%s", falling back to HTML', keyword)
-    url = ZENMARKET_MERCARI_SEARCH.format(query=encoded)
-    html = await _zenmarket_fetch(url, max_retries=max_retries)
-    if not html:
-        return []
-    listings = _parse_zenmarket_html(html, 'mercari')
-    if not listings:
-        logger.warning('Mercari ZenMarket page returned no listings for "%s"', keyword)
-    return listings
-
-
-async def _fetch_rakuma(keyword: str, max_retries: int = 3) -> list[Listing]:
-    url = ZENMARKET_RAKUMA_SEARCH.format(query=quote(keyword))
-    html = await _zenmarket_fetch(url, max_retries=max_retries)
-    if not html:
-        return []
-    listings = _parse_zenmarket_html(html, 'rakuma')
-    if not listings:
-        logger.warning('Rakuma ZenMarket page returned no listings for "%s"', keyword)
-    return listings
-
-
-# ---------------------------------------------------------------------------
 # Public interface
 # ---------------------------------------------------------------------------
 
 async def fetch_listings(keyword: str, source: str, max_retries: int = 3) -> list[Listing]:
     """Fetch listings for a keyword from the given source ('mercari' or 'rakuma')."""
+    encoded = quote(keyword)
+
     if source == 'mercari':
-        listings = await _fetch_mercari(keyword, max_retries=max_retries)
+        url = ZENMARKET_MERCARI_HANDLER.format(query=encoded)
+        referer = 'https://zenmarket.jp/mercari.aspx'
     elif source == 'rakuma':
-        listings = await _fetch_rakuma(keyword, max_retries=max_retries)
+        url = ZENMARKET_RAKUMA_HANDLER.format(query=encoded)
+        referer = 'https://zenmarket.jp/rakuma.aspx'
     else:
         logger.error('Unknown source: %s', source)
         return []
+
+    session_cookie = os.getenv('ZENMARKET_SESSION_COOKIE', '')
+    headers = {
+        **_AJAX_HEADERS,
+        'Cookie': session_cookie,
+        'Referer': referer,
+    }
+
+    delay = 2
+    raw = ''
+    for attempt in range(max_retries):
+        try:
+            async with AsyncSession() as session:
+                response = await session.get(
+                    url,
+                    headers=headers,
+                    impersonate='chrome120',
+                    timeout=30,
+                )
+                response.raise_for_status()
+                raw = response.text
+            break
+        except Exception as exc:
+            logger.warning(
+                'fetch_listings attempt %d/%d for "%s" on %s: %s',
+                attempt + 1, max_retries, keyword, source, exc,
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay *= 2
+
+    print(f'[fetch_listings] {source} raw response ({len(raw)} chars):\n{raw[:3000]}')
+
+    if not raw.strip():
+        return []
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning('JSON parse failed for %s response: %s', source, exc)
+        return []
+
+    listings = _parse_ajax_listings(data, source)
     logger.info('Fetched %d listings for "%s" on %s', len(listings), keyword, source)
     return listings
