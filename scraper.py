@@ -1,10 +1,12 @@
 """
-Mercari Japan scraper — scrapes jp.mercari.com search page HTML directly.
+Mercari Japan scraper — uses ZenMarket + curl-cffi (Cloudflare bypass) when
+ZENMARKET_* cookies are configured in .env; falls back to jp.mercari.com via httpx.
 """
 
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -13,6 +15,7 @@ from urllib.parse import quote
 
 import httpx
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,7 @@ _BROWSER_HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Language': 'ja-JP,ja;q=0.9',
     'Accept-Encoding': 'gzip, deflate, br',
+    'Referer': 'https://zenmarket.jp/',
 }
 
 CONDITION_MAP = {
@@ -113,6 +117,81 @@ def _parse_posted_ago(timestamp: Optional[int]) -> str:
     return f'{d} jour{"s" if d > 1 else ""}'
 
 
+def _get_zenmarket_cookies() -> Optional[dict]:
+    """Build cookie dict from ZENMARKET_* env vars; returns None if CF clearance is absent."""
+    cf_clearance = os.getenv('ZENMARKET_CF_CLEARANCE')
+    if not cf_clearance:
+        return None
+
+    cookies: dict[str, str] = {'cf_clearance': cf_clearance}
+
+    session_id = os.getenv('ZENMARKET_SESSION_ID')
+    if session_id:
+        cookies['ASP.NET_SessionId'] = session_id
+
+    auth = os.getenv('ZENMARKET_AUTH')
+    if auth:
+        cookies['.ASPXAUTH'] = auth
+
+    arr = os.getenv('ZENMARKET_ARR')
+    if arr:
+        cookies['ARRAffinity'] = arr
+
+    return cookies
+
+
+def _items_from_zenmarket_html(html: str) -> list[dict]:
+    """Extract listings from ZenMarket Mercari search page HTML."""
+    soup = BeautifulSoup(html, 'html.parser')
+    items = []
+    seen_ids: set[str] = set()
+
+    for a_tag in soup.find_all('a', href=re.compile(r'itemCode=m\d+', re.I)):
+        href = a_tag.get('href', '')
+        m = re.search(r'itemCode=(m\d+)', href, re.I)
+        if not m:
+            continue
+        item_id = m.group(1)
+        if item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+
+        img = a_tag.find('img')
+        image_url = ''
+        if img:
+            image_url = img.get('src') or img.get('data-src') or img.get('data-lazy') or ''
+
+        title = (
+            a_tag.get('title', '')
+            or (img.get('alt', '') if img else '')
+            or a_tag.get_text(strip=True)[:120]
+        ).strip()
+
+        # Walk up to a containing block, then scan it for a price string
+        container = a_tag.parent or a_tag
+        price_digits = ''
+        for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
+            digits = re.sub(r'[^\d]', '', str(text_node))
+            if len(digits) >= 3:
+                price_digits = digits
+                break
+
+        if not price_digits:
+            continue
+
+        items.append({
+            'id': item_id,
+            'name': title,
+            'price': int(price_digits),
+            'thumbnails': [image_url] if image_url else [],
+            'item_condition': {},
+            'status': 'on_sale',
+            'created': None,
+        })
+
+    return items
+
+
 def _items_from_next_data(html: str) -> list[dict]:
     """Extract items from Next.js __NEXT_DATA__ JSON embedded in the page."""
     soup = BeautifulSoup(html, 'html.parser')
@@ -126,7 +205,6 @@ def _items_from_next_data(html: str) -> list[dict]:
 
     page_props = data.get('props', {}).get('pageProps', {})
 
-    # Try known paths for Mercari's pageProps structure
     for path in [
         ['items'],
         ['searchResult', 'items'],
@@ -256,33 +334,55 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
 
 
 async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 3) -> list[Listing]:
-    """Fetch listings by scraping the Mercari JP search page HTML."""
+    """Fetch listings via ZenMarket (curl-cffi + CF cookies) or Mercari JP directly (httpx)."""
     encoded = quote(keyword)
-    url = MERCARI_SEARCH_URL.format(keyword=encoded)
+    cookies = _get_zenmarket_cookies()
+
+    if cookies:
+        url = ZENMARKET_SEARCH_URL.format(query=encoded)
+        logger.debug('ZenMarket mode (CF cookies present) for "%s"', keyword)
+    else:
+        url = MERCARI_SEARCH_URL.format(keyword=encoded)
+        logger.debug('Mercari direct mode (no CF cookies) for "%s"', keyword)
 
     delay = 2
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(
-                timeout=30,
-                headers=_BROWSER_HEADERS,
-                follow_redirects=True,
-            ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                html = response.text
+            if cookies:
+                async with AsyncSession(impersonate='chrome124') as session:
+                    response = await session.get(url, headers=_BROWSER_HEADERS, cookies=cookies)
+                    response.raise_for_status()
+                    html = response.text
+
+                items = _items_from_zenmarket_html(html)
+                if not items:
+                    logger.debug('ZenMarket parser found nothing for "%s", trying __NEXT_DATA__', keyword)
+                    items = _items_from_next_data(html) or _items_from_html(html)
+            else:
+                async with httpx.AsyncClient(
+                    timeout=30,
+                    headers=_BROWSER_HEADERS,
+                    follow_redirects=True,
+                ) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    html = response.text
 
                 items = _items_from_next_data(html)
                 if not items:
                     logger.debug('No __NEXT_DATA__ items for "%s", falling back to HTML parsing', keyword)
                     items = _items_from_html(html)
 
-                if not items:
-                    logger.warning('No items found in page for "%s"', keyword)
+            if not items:
+                logger.warning('No items found in page for "%s"', keyword)
 
-                listings = _parse_listings(items, keyword)
-                logger.info('Fetched %d listings for "%s"', len(listings), keyword)
-                return listings
+            listings = _parse_listings(items, keyword)
+            logger.info(
+                'Fetched %d listings for "%s" via %s',
+                len(listings), keyword, 'ZenMarket' if cookies else 'Mercari',
+            )
+            return listings
+
         except Exception as exc:
             logger.warning(
                 'fetch_listings attempt %d/%d for "%s": %s',
