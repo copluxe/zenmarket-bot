@@ -157,9 +157,10 @@ def _get_zenmarket_cookies() -> Optional[dict]:
 def _items_from_zenmarket_html(html: str) -> list[dict]:
     """Extract listings from ZenMarket Mercari search page HTML."""
     soup = BeautifulSoup(html, 'html.parser')
-    items = []
     seen_ids: set[str] = set()
 
+    # Pass 1: collect item links in DOM order, capturing the ZenMarket URL directly
+    raw_items = []
     for a_tag in soup.find_all('a', href=re.compile(r'itemCode=m\d+', re.I)):
         href = a_tag.get('href', '')
         m = re.search(r'itemCode=(m\d+)', href, re.I)
@@ -170,43 +171,47 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             continue
         seen_ids.add(item_id)
 
+        # Build absolute ZenMarket URL from the actual href on the page
+        if href.startswith('http'):
+            zm_url = href
+        else:
+            zm_url = 'https://zenmarket.jp' + (href if href.startswith('/') else '/' + href)
+
         img = a_tag.find('img')
-        image_url = ''
-        if img:
-            image_url = img.get('src') or img.get('data-src') or img.get('data-lazy') or ''
+        image_url = (img.get('src') or img.get('data-src') or img.get('data-lazy') or '') if img else ''
+        title = (a_tag.get('title', '') or (img.get('alt', '') if img else '') or '').strip()
 
-        title = (
-            a_tag.get('title', '')
-            or (img.get('alt', '') if img else '')
-            or a_tag.get_text(strip=True)[:120]
-        ).strip()
+        raw_items.append({'id': item_id, 'zm_url': zm_url, 'image_url': image_url, 'title': title})
 
-        # Find the first ¥ price that appears AFTER this item's link in document order.
-        # This avoids shared containers that span the entire results grid.
-        price_digits = ''
-        for text_node in a_tag.find_all_next(string=_PRICE_RE):
-            match = _PRICE_RE.search(str(text_node))
-            if not match:
-                continue
-            raw = (match.group(1) or match.group(2) or '').strip()
-            digits = re.sub(r'[^\d]', '', raw)
-            if digits:
-                val = int(digits)
-                if 100 <= val <= 10_000_000:
-                    price_digits = str(val)
-                    break
-
-        if not price_digits:
-            logger.warning('No price found for item %s', item_id)
+    # Pass 2: collect all ¥ prices in DOM order (same sequential order as items)
+    prices: list[int] = []
+    for text_node in soup.find_all(string=_PRICE_RE):
+        match = _PRICE_RE.search(str(text_node))
+        if not match:
             continue
+        raw = (match.group(1) or match.group(2) or '').strip()
+        digits = re.sub(r'[^\d]', '', raw)
+        if not digits:
+            continue
+        val = int(digits)
+        if 100 <= val <= 10_000_000:
+            prices.append(val)
 
-        logger.info('Item %s → ¥%s', item_id, price_digits)
+    logger.info('ZenMarket: %d items, %d ¥ prices in page', len(raw_items), len(prices))
 
+    # Pass 3: match items to prices by index (items and prices appear in the same order)
+    items = []
+    for i, data in enumerate(raw_items):
+        if i >= len(prices):
+            logger.warning('No price at index %d for item %s', i, data['id'])
+            break
+        logger.info('Item %s → ¥%d  %s', data['id'], prices[i], data['zm_url'])
         items.append({
-            'id': item_id,
-            'name': title,
-            'price': int(price_digits),
-            'thumbnails': [image_url] if image_url else [],
+            'id': data['id'],
+            'name': data['title'],
+            'price': prices[i],
+            'zm_url': data['zm_url'],
+            'thumbnails': [data['image_url']] if data['image_url'] else [],
             'item_condition': {},
             'status': 'on_sale',
             'created': None,
@@ -302,7 +307,8 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             if not item_id:
                 continue
 
-            zenmarket_url = ZENMARKET_ITEM_URL.format(item_id=item_id)
+            zm_url = item.get('zm_url')
+            zenmarket_url = zm_url if zm_url else ZENMARKET_ITEM_URL.format(item_id=item_id)
 
             title = str(item.get('name', '') or item.get('title', '')).strip()
 
