@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 MERCARI_SEARCH_URL = 'https://jp.mercari.com/search?keyword={keyword}&status=on_sale'
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/mercari.aspx?q={query}'
+ZENMARKET_ITEM_URL = 'https://zenmarket.jp/fr/mercariitem.aspx?itemCode={item_id}'
 
 # Matches ¥ prices with comma or space thousand separators: "¥ 45,000" / "45 000 ¥" / "￥15000"
 _PRICE_RE = re.compile(r'[¥￥]\s*([\d][\d\s,]*\d)|([\d][\d\s,]*\d)\s*[¥￥]')
@@ -294,13 +295,14 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
         return []
 
     listings: list[Listing] = []
-    zenmarket_url = ZENMARKET_SEARCH_URL.format(query=quote(query))
 
     for item in items:
         try:
             item_id = str(item.get('id', '')).strip()
             if not item_id:
                 continue
+
+            zenmarket_url = ZENMARKET_ITEM_URL.format(item_id=item_id)
 
             title = str(item.get('name', '') or item.get('title', '')).strip()
 
