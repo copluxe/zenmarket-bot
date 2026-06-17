@@ -126,19 +126,29 @@ def _get_zenmarket_cookies() -> Optional[dict]:
     if not cf_clearance:
         return None
 
-    cookies: dict[str, str] = {'cf_clearance': cf_clearance}
+    cookies: dict[str, str] = {
+        'cf_clearance': cf_clearance,
+        'zlang': 'fr',            # UI in French
+        'prefCCcurrency': 'JPY',  # Force JPY prices so price parsing always sees ¥
+    }
 
     session_id = os.getenv('ZENMARKET_SESSION_ID')
     if session_id:
         cookies['ASP.NET_SessionId'] = session_id
 
+    # Support both legacy .ASPXAUTH and newer .zenuauth token
     auth = os.getenv('ZENMARKET_AUTH')
     if auth:
         cookies['.ASPXAUTH'] = auth
 
+    zenuauth = os.getenv('ZENMARKET_ZENUAUTH')
+    if zenuauth:
+        cookies['.zenuauth'] = zenuauth
+
     arr = os.getenv('ZENMARKET_ARR')
     if arr:
         cookies['ARRAffinity'] = arr
+        cookies['ARRAffinitySameSite'] = arr
 
     return cookies
 
