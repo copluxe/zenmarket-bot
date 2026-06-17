@@ -258,7 +258,28 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
 
         img = a_tag.find('img')
         image_url = (img.get('src') or img.get('data-src') or img.get('data-lazy') or '') if img else ''
-        title = (a_tag.get('title', '') or (img.get('alt', '') if img else '') or '').strip()
+
+        # Title: try anchor attrs, image attrs, anchor text, then card container elements
+        title = (
+            a_tag.get('title', '')
+            or a_tag.get('aria-label', '')
+            or (img.get('alt', '') or img.get('data-alt', '') or img.get('title', '') if img else '')
+            or a_tag.get_text(strip=True)
+        ).strip()
+
+        if not title:
+            # Walk up to card container and look for a title/name/caption element
+            card = a_tag
+            for _ in range(3):
+                if card.parent:
+                    card = card.parent
+            for kw in ('title', 'name', 'caption', 'label', 'description', 'product'):
+                elem = card.find(class_=re.compile(kw, re.I))
+                if elem:
+                    txt = elem.get_text(strip=True)
+                    if txt and len(txt) >= 3 and '€' not in txt and '¥' not in txt:
+                        title = txt[:200]
+                        break
 
         price = _price_from_card(a_tag)
         if price is None:
