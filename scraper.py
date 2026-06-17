@@ -27,6 +27,13 @@ ZENMARKET_ITEM_URL = 'https://zenmarket.jp/fr/mercariitem.aspx?itemCode={item_id
 # Matches ¥ prices with comma or space thousand separators: "¥ 45,000" / "45 000 ¥" / "￥15000"
 _PRICE_RE = re.compile(r'[¥￥]\s*([\d][\d\s,]*\d)|([\d][\d\s,]*\d)\s*[¥￥]')
 
+# Matches € prices in French format: "€226,04"  "€2 769,01"  "€2\xa0769,01"
+# Group 1 = digits after €, group 2 = digits before €
+_EUR_PRICE_RE = re.compile(
+    r'€\s*([\d][\d  ]*(?:[,]\d{1,2})?)'
+    r'|([\d][\d  ]*(?:[,]\d{1,2})?)\s*€'
+)
+
 _BROWSER_HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -75,6 +82,22 @@ def _get_eur_per_jpy() -> float:
 
 def jpy_to_eur(jpy: int) -> int:
     return round(jpy * _get_eur_per_jpy())
+
+
+def eur_to_jpy(eur: float) -> int:
+    rate = _get_eur_per_jpy()
+    return round(eur / rate) if rate else round(eur * 160)
+
+
+def _parse_eur_amount(raw: str) -> Optional[float]:
+    """Parse a French-format EUR amount like '226,04' or '2\xa0769,01'."""
+    clean = re.sub(r'[\s\xa0]', '', raw.strip())
+    clean = clean.replace(',', '.')
+    try:
+        val = float(clean)
+        return val if 0.5 <= val <= 150_000.0 else None
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -172,22 +195,40 @@ def _debug_card_structure(a_tag):
 
 
 def _price_from_card(a_tag) -> Optional[int]:
-    """Walk up from an item anchor to find its price in the card container."""
+    """Walk up from an item anchor to find its price.
+
+    ZenMarket shows prices in EUR (French format) when the account has EUR
+    preference, ignoring the prefCCcurrency cookie. We try ¥ first, then € and
+    convert to JPY. We stop climbing as soon as a container has > 2 prices
+    (meaning we've left the card scope and entered the grid).
+    """
     node = a_tag.parent
-    for _ in range(10):
+    for _ in range(8):
         if node is None:
             return None
         combined = node.get_text(separator='')
-        valid = [
+
+        # --- Try JPY (¥) prices ---
+        jpy_valid = [
             int(re.sub(r'[^\d]', '', m.group(1) or m.group(2) or ''))
             for m in _PRICE_RE.finditer(combined)
             if re.sub(r'[^\d]', '', m.group(1) or m.group(2) or '')
             and 100 <= int(re.sub(r'[^\d]', '', m.group(1) or m.group(2) or '')) <= 10_000_000
         ]
-        if valid:
-            if len(valid) <= 2:
-                return valid[0]
-            return None  # too many prices → grid container
+        if jpy_valid:
+            return jpy_valid[0] if len(jpy_valid) <= 2 else None
+
+        # --- Try EUR (€) prices — French format "€226,04" / "€2\xa0769,01" ---
+        eur_valid = [
+            v for v in (
+                _parse_eur_amount(m.group(1) or m.group(2) or '')
+                for m in _EUR_PRICE_RE.finditer(combined)
+            )
+            if v is not None
+        ]
+        if eur_valid:
+            return eur_to_jpy(eur_valid[0]) if len(eur_valid) <= 2 else None
+
         node = node.parent
     return None
 
@@ -237,13 +278,6 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
         })
 
     logger.info('ZenMarket: %d items parsed', len(items))
-
-    # If every item ended up with the same price it's almost certainly wrong —
-    # dump the DOM structure of the first anchor to diagnose.
-    if len(items) > 3 and len(set(i['price'] for i in items)) == 1:
-        logger.warning('All items share price ¥%d — dumping DOM for diagnosis:', items[0]['price'])
-        _debug_card_structure(all_anchors[0])
-
     return items
 
 
