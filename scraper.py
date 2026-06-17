@@ -180,8 +180,10 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             or a_tag.get_text(strip=True)[:120]
         ).strip()
 
-        # Search for ¥-annotated price in the card container (handles space/comma separators)
+        # Go up 2 levels: a_tag → thumbnail div → card div (where price sibling lives)
         container = a_tag.parent or a_tag
+        if container.parent:
+            container = container.parent
         card_text = container.get_text(' ')
         candidates: list[int] = []
         for match in _PRICE_RE.finditer(card_text):
