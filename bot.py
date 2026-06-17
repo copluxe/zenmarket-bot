@@ -97,6 +97,8 @@ class ZenMarketBot(discord.Client):
             self.scrape_loop.start()
         if not self.daily_stats_loop.is_running():
             self.daily_stats_loop.start()
+        if not self.watchdog_loop.is_running():
+            self.watchdog_loop.start()
 
     async def on_disconnect(self):
         logger.warning('Bot disconnected from Discord — will auto-reconnect.')
@@ -116,6 +118,14 @@ class ZenMarketBot(discord.Client):
     @scrape_loop.before_loop
     async def before_scrape(self):
         await self.wait_until_ready()
+
+    @scrape_loop.error
+    async def scrape_error(self, error: Exception):
+        logger.error('scrape_loop crashed: %s', error, exc_info=error)
+        await asyncio.sleep(10)
+        if not self.scrape_loop.is_running():
+            logger.warning('Restarting scrape_loop after crash.')
+            self.scrape_loop.restart()
 
     async def _process_brand_source(
         self, brand_key: str, brand_info: dict, source: str
@@ -173,6 +183,23 @@ class ZenMarketBot(discord.Client):
             await asyncio.sleep(0.5)
 
     # ------------------------------------------------------------------
+    # Watchdog — restarts loops if they die silently
+    # ------------------------------------------------------------------
+
+    @tasks.loop(minutes=5)
+    async def watchdog_loop(self):
+        if not self.scrape_loop.is_running():
+            logger.warning('Watchdog: scrape_loop stopped, restarting.')
+            self.scrape_loop.restart()
+        if not self.daily_stats_loop.is_running():
+            logger.warning('Watchdog: daily_stats_loop stopped, restarting.')
+            self.daily_stats_loop.restart()
+
+    @watchdog_loop.before_loop
+    async def before_watchdog(self):
+        await self.wait_until_ready()
+
+    # ------------------------------------------------------------------
     # Daily stats task (23:00 JST)
     # ------------------------------------------------------------------
 
@@ -185,6 +212,13 @@ class ZenMarketBot(discord.Client):
     @daily_stats_loop.before_loop
     async def before_stats(self):
         await self.wait_until_ready()
+
+    @daily_stats_loop.error
+    async def stats_error(self, error: Exception):
+        logger.error('daily_stats_loop crashed: %s', error, exc_info=error)
+        if not self.daily_stats_loop.is_running():
+            logger.warning('Restarting daily_stats_loop after crash.')
+            self.daily_stats_loop.restart()
 
     async def _post_daily_stats(self):
         ch = self.channel_map.get('top-modeles-du-jour')
