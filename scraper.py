@@ -192,10 +192,11 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
                         candidates.append(val)
 
         if not candidates:
-            logger.debug('No price found for item %s in: %r', item_id, card_text[:200])
+            logger.warning('No price found for item %s in card text: %r', item_id, card_text[:300])
             continue
 
         price_digits = str(max(candidates))
+        logger.info('Item %s → candidates %s → selected %s', item_id, candidates, price_digits)
 
         items.append({
             'id': item_id,
