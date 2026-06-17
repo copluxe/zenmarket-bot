@@ -180,35 +180,26 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             or a_tag.get_text(strip=True)[:120]
         ).strip()
 
-        # Go up 2 levels: a_tag → thumbnail div → card div (where price sibling lives)
-        container = a_tag.parent or a_tag
-        if container.parent:
-            container = container.parent
-        card_text = container.get_text(' ')
-        candidates: list[int] = []
-        for match in _PRICE_RE.finditer(card_text):
+        # Find the first ¥ price that appears AFTER this item's link in document order.
+        # This avoids shared containers that span the entire results grid.
+        price_digits = ''
+        for text_node in a_tag.find_all_next(string=_PRICE_RE):
+            match = _PRICE_RE.search(str(text_node))
+            if not match:
+                continue
             raw = (match.group(1) or match.group(2) or '').strip()
             digits = re.sub(r'[^\d]', '', raw)
             if digits:
                 val = int(digits)
                 if 100 <= val <= 10_000_000:
-                    candidates.append(val)
+                    price_digits = str(val)
+                    break
 
-        # Fallback: largest plausible number if no ¥ symbol found
-        if not candidates:
-            for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
-                digits = re.sub(r'[^\d]', '', str(text_node))
-                if len(digits) >= 3:
-                    val = int(digits)
-                    if 100 <= val <= 10_000_000:
-                        candidates.append(val)
-
-        if not candidates:
-            logger.warning('No price found for item %s in card text: %r', item_id, card_text[:300])
+        if not price_digits:
+            logger.warning('No price found for item %s', item_id)
             continue
 
-        price_digits = str(max(candidates))
-        logger.info('Item %s → candidates %s → selected %s', item_id, candidates, price_digits)
+        logger.info('Item %s → ¥%s', item_id, price_digits)
 
         items.append({
             'id': item_id,
