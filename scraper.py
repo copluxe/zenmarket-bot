@@ -23,6 +23,9 @@ MERCARI_SEARCH_URL = 'https://jp.mercari.com/search?keyword={keyword}&status=on_
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/mercari.aspx?q={query}'
 
+# Matches ¥ prices with comma or space thousand separators: "¥ 45,000" / "45 000 ¥" / "￥15000"
+_PRICE_RE = re.compile(r'[¥￥]\s*([\d][\d\s,]*\d)|([\d][\d\s,]*\d)\s*[¥￥]')
+
 _BROWSER_HEADERS = {
     'User-Agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -167,29 +170,32 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             or a_tag.get_text(strip=True)[:120]
         ).strip()
 
-        # Priority: element with "price" in its class name inside the card
+        # Search for ¥-annotated price in the card container (handles space/comma separators)
         container = a_tag.parent or a_tag
-        price_digits = ''
-        price_el = container.find(class_=re.compile(r'price', re.I))
-        if price_el:
-            digits = re.sub(r'[^\d]', '', price_el.get_text())
-            if len(digits) >= 3:
-                price_digits = digits
+        card_text = container.get_text(' ')
+        candidates: list[int] = []
+        for match in _PRICE_RE.finditer(card_text):
+            raw = (match.group(1) or match.group(2) or '').strip()
+            digits = re.sub(r'[^\d]', '', raw)
+            if digits:
+                val = int(digits)
+                if 100 <= val <= 10_000_000:
+                    candidates.append(val)
 
-        # Fallback: largest plausible JPY price in the immediate card container
-        if not price_digits:
-            candidates: list[int] = []
+        # Fallback: largest plausible number if no ¥ symbol found
+        if not candidates:
             for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
                 digits = re.sub(r'[^\d]', '', str(text_node))
                 if len(digits) >= 3:
                     val = int(digits)
                     if 100 <= val <= 10_000_000:
                         candidates.append(val)
-            if candidates:
-                price_digits = str(max(candidates))
 
-        if not price_digits:
+        if not candidates:
+            logger.debug('No price found for item %s in: %r', item_id, card_text[:200])
             continue
+
+        price_digits = str(max(candidates))
 
         items.append({
             'id': item_id,
