@@ -154,13 +154,41 @@ def _get_zenmarket_cookies() -> Optional[dict]:
     return cookies
 
 
+def _price_from_card(a_tag) -> Optional[int]:
+    """Walk up from an item anchor to find its price inside its card container.
+
+    ZenMarket splits the ¥ symbol and the digits across sibling elements, so
+    we must call get_text(separator='') on a common ancestor to reunite them.
+    We accept the first ancestor whose combined text contains exactly 1-2 prices
+    (current price + optional original price) and stop as soon as we would enter
+    a container that spans multiple cards (> 2 prices found).
+    """
+    node = a_tag.parent
+    for _ in range(10):
+        if node is None:
+            return None
+        combined = node.get_text(separator='')
+        all_prices = [
+            int(re.sub(r'[^\d]', '', m.group(1) or m.group(2) or ''))
+            for m in _PRICE_RE.finditer(combined)
+            if re.sub(r'[^\d]', '', m.group(1) or m.group(2) or '')
+        ]
+        valid = [v for v in all_prices if 100 <= v <= 10_000_000]
+        if valid:
+            if len(valid) <= 2:
+                return valid[0]
+            # More than 2 prices → we've left the card scope
+            return None
+        node = node.parent
+    return None
+
+
 def _items_from_zenmarket_html(html: str) -> list[dict]:
     """Extract listings from ZenMarket Mercari search page HTML."""
     soup = BeautifulSoup(html, 'html.parser')
     seen_ids: set[str] = set()
+    items = []
 
-    # Pass 1: collect item links in DOM order, capturing the ZenMarket URL directly
-    raw_items = []
     for a_tag in soup.find_all('a', href=re.compile(r'itemCode=m\d+', re.I)):
         href = a_tag.get('href', '')
         m = re.search(r'itemCode=(m\d+)', href, re.I)
@@ -181,42 +209,24 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
         image_url = (img.get('src') or img.get('data-src') or img.get('data-lazy') or '') if img else ''
         title = (a_tag.get('title', '') or (img.get('alt', '') if img else '') or '').strip()
 
-        raw_items.append({'id': item_id, 'zm_url': zm_url, 'image_url': image_url, 'title': title})
-
-    # Pass 2: collect all ¥ prices in DOM order (same sequential order as items)
-    prices: list[int] = []
-    for text_node in soup.find_all(string=_PRICE_RE):
-        match = _PRICE_RE.search(str(text_node))
-        if not match:
+        price = _price_from_card(a_tag)
+        if price is None:
+            logger.warning('No price found for item %s', item_id)
             continue
-        raw = (match.group(1) or match.group(2) or '').strip()
-        digits = re.sub(r'[^\d]', '', raw)
-        if not digits:
-            continue
-        val = int(digits)
-        if 100 <= val <= 10_000_000:
-            prices.append(val)
 
-    logger.info('ZenMarket: %d items, %d ¥ prices in page', len(raw_items), len(prices))
-
-    # Pass 3: match items to prices by index (items and prices appear in the same order)
-    items = []
-    for i, data in enumerate(raw_items):
-        if i >= len(prices):
-            logger.warning('No price at index %d for item %s', i, data['id'])
-            break
-        logger.info('Item %s → ¥%d  %s', data['id'], prices[i], data['zm_url'])
+        logger.info('Item %s → ¥%d  %s', item_id, price, zm_url)
         items.append({
-            'id': data['id'],
-            'name': data['title'],
-            'price': prices[i],
-            'zm_url': data['zm_url'],
-            'thumbnails': [data['image_url']] if data['image_url'] else [],
+            'id': item_id,
+            'name': title,
+            'price': price,
+            'zm_url': zm_url,
+            'thumbnails': [image_url] if image_url else [],
             'item_condition': {},
             'status': 'on_sale',
             'created': None,
         })
 
+    logger.info('ZenMarket: %d items parsed', len(items))
     return items
 
 
