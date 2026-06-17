@@ -154,31 +154,40 @@ def _get_zenmarket_cookies() -> Optional[dict]:
     return cookies
 
 
-def _price_from_card(a_tag) -> Optional[int]:
-    """Walk up from an item anchor to find its price inside its card container.
+def _debug_card_structure(a_tag):
+    """Log the ancestor chain for one item anchor to reveal where prices live."""
+    node = a_tag
+    for level in range(10):
+        node = node.parent
+        if node is None:
+            break
+        txt = node.get_text(separator=' ').strip().replace('\n', ' ')
+        yen_hits = len(list(_PRICE_RE.finditer(node.get_text(separator=''))))
+        num_hits = re.findall(r'\b\d[\d,\s]{2,6}\d\b', node.get_text(separator=' '))
+        logger.warning(
+            'DOM L%d <%s class=%r> ¥=%d nums=%s | %.100s',
+            level + 1, node.name, ' '.join(node.get('class', [])),
+            yen_hits, num_hits[:5], txt[:100],
+        )
 
-    ZenMarket splits the ¥ symbol and the digits across sibling elements, so
-    we must call get_text(separator='') on a common ancestor to reunite them.
-    We accept the first ancestor whose combined text contains exactly 1-2 prices
-    (current price + optional original price) and stop as soon as we would enter
-    a container that spans multiple cards (> 2 prices found).
-    """
+
+def _price_from_card(a_tag) -> Optional[int]:
+    """Walk up from an item anchor to find its price in the card container."""
     node = a_tag.parent
     for _ in range(10):
         if node is None:
             return None
         combined = node.get_text(separator='')
-        all_prices = [
+        valid = [
             int(re.sub(r'[^\d]', '', m.group(1) or m.group(2) or ''))
             for m in _PRICE_RE.finditer(combined)
             if re.sub(r'[^\d]', '', m.group(1) or m.group(2) or '')
+            and 100 <= int(re.sub(r'[^\d]', '', m.group(1) or m.group(2) or '')) <= 10_000_000
         ]
-        valid = [v for v in all_prices if 100 <= v <= 10_000_000]
         if valid:
             if len(valid) <= 2:
                 return valid[0]
-            # More than 2 prices → we've left the card scope
-            return None
+            return None  # too many prices → grid container
         node = node.parent
     return None
 
@@ -189,7 +198,9 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
     seen_ids: set[str] = set()
     items = []
 
-    for a_tag in soup.find_all('a', href=re.compile(r'itemCode=m\d+', re.I)):
+    all_anchors = soup.find_all('a', href=re.compile(r'itemCode=m\d+', re.I))
+
+    for a_tag in all_anchors:
         href = a_tag.get('href', '')
         m = re.search(r'itemCode=(m\d+)', href, re.I)
         if not m:
@@ -199,7 +210,6 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             continue
         seen_ids.add(item_id)
 
-        # Build absolute ZenMarket URL from the actual href on the page
         if href.startswith('http'):
             zm_url = href
         else:
@@ -227,6 +237,13 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
         })
 
     logger.info('ZenMarket: %d items parsed', len(items))
+
+    # If every item ended up with the same price it's almost certainly wrong —
+    # dump the DOM structure of the first anchor to diagnose.
+    if len(items) > 3 and len(set(i['price'] for i in items)) == 1:
+        logger.warning('All items share price ¥%d — dumping DOM for diagnosis:', items[0]['price'])
+        _debug_card_structure(all_anchors[0])
+
     return items
 
 
