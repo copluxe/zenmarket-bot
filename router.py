@@ -8,6 +8,8 @@ from typing import List
 # Shared category detection keywords and their channel suffix.
 # Channel name = {brand_prefix}-{suffix}
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    'sacs-a-main':  ['ハンドバッグ', 'handbag', 'sac à main', 'sac a main', '手提げバッグ', '手提げ'],
+    'sacs':         ['バッグ', '鞄', 'かばん'],
     'pochettes':    ['pochette', 'ポシェット', 'ポーチ'],
     'cabas':        ['cabas', 'カバ', 'トート'],
     'sacoches':     ['sacoche', 'サコッシュ', 'ショルダー'],
