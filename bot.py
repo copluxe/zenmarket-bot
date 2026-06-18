@@ -228,7 +228,6 @@ class ZenMarketBot(discord.Client):
     async def daily_stats_loop(self):
         now = datetime.now(JST)
         if now.hour == 23 and now.minute == 0:
-            await self._post_daily_stats()
             await self._post_daily_records()
 
     @daily_stats_loop.before_loop
@@ -285,29 +284,31 @@ class ZenMarketBot(discord.Client):
                 except discord.HTTPException as exc:
                     logger.error('records-prix-bas post failed: %s', exc)
 
-        # 3. Fastest sold
-        ch = self.channel_map.get('records-vente-rapide')
+        # 3. Fastest cop (all brands, all items)
+        ch = self.channel_map.get('records-cop-rapide')
         if ch:
-            fast = database.get_fastest_sold(today, _RECORD_BRANDS)
+            fast = database.get_fastest_sold(today)
             if fast:
-                lines = [f'⚡ **VENTE LA PLUS RAPIDE — {today}**',
-                         '*(LV & Gucci — sacs uniquement)*', '']
-                for item in fast:
-                    name = _RECORD_BRAND_NAMES.get(item['brand'], item['brand'])
+                lines = [f'⚡ **TOP 3 COPS LES PLUS RAPIDES — {today}**',
+                         '*(toutes marques, tous articles)*', '']
+                for i, item in enumerate(fast, 1):
+                    brand_info_rec = BRANDS.get(item['brand'], {})
+                    name = brand_info_rec.get('name_fr', item['brand'])
                     mins = int(item['lifetime_minutes'] or 0)
                     if mins < 60:
                         duration = f'{mins} minute{"s" if mins != 1 else ""}'
                     else:
                         h, m = divmod(mins, 60)
                         duration = f'{h}h{m:02d}'
-                    lines.append(f'⚡ **{name}** — vendu en **{duration}**')
+                    medal = ['🥇', '🥈', '🥉'][i - 1]
+                    lines.append(f'{medal} **{name}** — copé en **{duration}**')
                     if item.get('price_jpy'):
                         lines.append(f'  Prix : ¥{item["price_jpy"]:,}')
                     lines.append('')
                 try:
                     await ch.send('\n'.join(lines))
                 except discord.HTTPException as exc:
-                    logger.error('records-vente-rapide post failed: %s', exc)
+                    logger.error('records-cop-rapide post failed: %s', exc)
 
         await asyncio.sleep(1)
 

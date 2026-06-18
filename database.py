@@ -174,25 +174,23 @@ def get_price_records(date: str, brands: list) -> list:
     return results
 
 
-def get_fastest_sold(date: str, brands: list) -> list:
-    """Bag items posted today that disappeared fastest (= likely sold quickly).
+def get_fastest_sold(date: str) -> list:
+    """Top 3 items that appeared and disappeared fastest today (all brands, all items).
 
     An item is considered 'possibly sold' when last_seen_at is more than 2 hours
     old — meaning it no longer appears in the search results.
     """
     conn = get_connection()
     c = conn.cursor()
-    placeholders = ','.join('?' for _ in brands)
     c.execute(
-        f'''SELECT listing_id, brand, price_jpy, posted_at, last_seen_at,
+        '''SELECT listing_id, brand, price_jpy, posted_at, last_seen_at,
                    ROUND((julianday(last_seen_at) - julianday(posted_at)) * 24 * 60) AS lifetime_minutes
             FROM seen_listings
-            WHERE brand IN ({placeholders}) AND is_bag = 1
-              AND date(posted_at) = ?
+            WHERE date(posted_at) = ?
               AND datetime(last_seen_at) < datetime('now', '-2 hours')
             ORDER BY lifetime_minutes ASC
             LIMIT 3''',
-        brands + [date],
+        (date,),
     )
     results = [dict(r) for r in c.fetchall()]
     conn.close()

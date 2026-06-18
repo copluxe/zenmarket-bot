@@ -25,10 +25,9 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
         'chat',
     ]),
     ('📊 STATISTIQUES', [
-        'top-modeles-du-jour',
         'records-marque-active',
         'records-prix-bas',
-        'records-vente-rapide',
+        'records-cop-rapide',
     ]),
     ('❤️ FAVORIS', [
         'favoris',
@@ -134,10 +133,9 @@ Ce bot surveille **Mercari Japan** via ZenMarket et publie les nouvelles annonce
 - **#[marque]-toutes-annonces** — Toutes les annonces d'une marque
 - **#[marque]-[modele]** — Annonces filtrées par modèle (ex: #lv-neverfull)
 - **#[marque]-[categorie]** — Annonces filtrées par catégorie (ex: #lv-pochettes)
-- **#top-modeles-du-jour** — Classement des modèles les plus listés (chaque soir à **23h JST / 16h heure française**)
 - **#records-marque-active** — Marque la plus active du jour — LV vs Gucci sacs (chaque soir à **23h JST / 16h heure française**)
 - **#records-prix-bas** — Prix le plus bas du jour vs moyenne 30 jours — LV & Gucci sacs (chaque soir à **23h JST / 16h heure française**)
-- **#records-vente-rapide** — Annonces vendues le plus rapidement — LV & Gucci sacs (chaque soir à **23h JST / 16h heure française**)
+- **#records-cop-rapide** — Top 3 des cops les plus rapides du jour — toutes marques (chaque soir à **23h JST / 16h heure française**)
 - **#favoris** — Vos articles sauvegardés
 
 ## 💡 Utilisation
