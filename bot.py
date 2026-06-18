@@ -94,6 +94,20 @@ class ZenMarketBot(discord.Client):
         self.channel_map = await setup_guild(self.guild)
         logger.info('Channel map built: %d channels', len(self.channel_map))
 
+        # Refresh help message — delete bot's own old messages then repost
+        help_ch = self.channel_map.get('comment-utiliser-le-bot')
+        if help_ch:
+            try:
+                from channel_manager import HELP_TEXT
+                async for msg in help_ch.history(limit=20):
+                    if msg.author == self.user:
+                        await msg.delete()
+                await help_ch.send(HELP_TEXT)
+            except discord.Forbidden:
+                logger.warning('No permission to refresh #comment-utiliser-le-bot')
+            except discord.HTTPException as exc:
+                logger.error('Failed to refresh help message: %s', exc)
+
         # Register the persistent view once; the fixed custom_id 'save_listing'
         # means a single registration covers all listing messages.
         if not self.persistent_views_added:

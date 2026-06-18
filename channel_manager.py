@@ -191,15 +191,4 @@ async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
             else:
                 channel_map[ch_name] = existing_channels[ch_name]
 
-    # Always refresh the help message in #comment-utiliser-le-bot
-    help_ch: Optional[discord.TextChannel] = channel_map.get('comment-utiliser-le-bot')
-    if help_ch:
-        try:
-            await help_ch.purge(limit=10)
-            await help_ch.send(HELP_TEXT)
-        except discord.Forbidden:
-            pass
-        except discord.HTTPException as exc:
-            logger.error('Failed to refresh help message: %s', exc)
-
     return channel_map
