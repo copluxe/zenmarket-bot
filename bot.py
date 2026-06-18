@@ -94,19 +94,8 @@ class ZenMarketBot(discord.Client):
         self.channel_map = await setup_guild(self.guild)
         logger.info('Channel map built: %d channels', len(self.channel_map))
 
-        # Refresh help message — delete bot's own old messages then repost
-        help_ch = self.channel_map.get('comment-utiliser-le-bot')
-        if help_ch:
-            try:
-                from channel_manager import HELP_TEXT
-                async for msg in help_ch.history(limit=20):
-                    if msg.author == self.user:
-                        await msg.delete()
-                await help_ch.send(HELP_TEXT)
-            except discord.Forbidden:
-                logger.warning('No permission to refresh #comment-utiliser-le-bot')
-            except discord.HTTPException as exc:
-                logger.error('Failed to refresh help message: %s', exc)
+        # Refresh help message — edit stored message ID or send new one
+        await self._refresh_help_message()
 
         # Register the persistent view once; the fixed custom_id 'save_listing'
         # means a single registration covers all listing messages.
@@ -123,6 +112,44 @@ class ZenMarketBot(discord.Client):
 
     async def on_disconnect(self):
         logger.warning('Bot disconnected from Discord — will auto-reconnect.')
+
+    # ------------------------------------------------------------------
+    # Help message management
+    # ------------------------------------------------------------------
+
+    _HELP_ID_FILE = 'help_message_id.txt'
+
+    async def _refresh_help_message(self):
+        from channel_manager import HELP_TEXT
+        help_ch = self.channel_map.get('comment-utiliser-le-bot')
+        if not help_ch:
+            return
+        try:
+            # Try to edit the previously sent message
+            msg_id = None
+            try:
+                with open(self._HELP_ID_FILE) as f:
+                    msg_id = int(f.read().strip())
+            except (FileNotFoundError, ValueError):
+                pass
+
+            if msg_id:
+                try:
+                    msg = await help_ch.fetch_message(msg_id)
+                    await msg.edit(content=HELP_TEXT)
+                    logger.info('Help message updated (edit)')
+                    return
+                except discord.NotFound:
+                    pass  # Message deleted — send a fresh one
+
+            sent = await help_ch.send(HELP_TEXT)
+            with open(self._HELP_ID_FILE, 'w') as f:
+                f.write(str(sent.id))
+            logger.info('Help message sent (new)')
+        except discord.Forbidden:
+            logger.warning('No permission to post in #comment-utiliser-le-bot')
+        except discord.HTTPException as exc:
+            logger.error('Failed to refresh help message: %s', exc)
 
     # ------------------------------------------------------------------
     # Scraping task
