@@ -8,13 +8,15 @@ from typing import List
 # Shared category detection keywords and their channel suffix.
 # Channel name = {brand_prefix}-{suffix}
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    'sacs-a-main':  ['ハンドバッグ', 'handbag', 'sac à main', 'sac a main', '手提げバッグ', '手提げ'],
-    'sacs':         ['バッグ', '鞄', 'かばん'],
+    # French ZenMarket category strings + Japanese/English fallbacks
+    'sacs-a-main':  ['sacs à main', 'sac à main', 'sac a main', 'ハンドバッグ', 'handbag', '手提げバッグ', '手提げ'],
+    'sacs':         ['sacs de voyage', 'sac de voyage', 'sacs boston', 'boston bag', 'fourre-tout',
+                     'sacs de sport', 'バッグ', '鞄', 'かばん'],
     'pochettes':    ['pochette', 'ポシェット', 'ポーチ'],
-    'cabas':        ['cabas', 'カバ', 'トート'],
-    'sacoches':     ['sacoche', 'サコッシュ', 'ショルダー'],
-    'etuis':        ['étui', 'etui', 'ケース', '小物'],
-    'portefeuilles': ['portefeuille', '財布', 'ポルトフォイユ', 'ウォレット'],
+    'cabas':        ['cabas', 'カバ', 'トート', 'tote'],
+    'sacoches':     ['sacoche', 'bandoulière', 'bandolière', 'サコッシュ', 'ショルダー', 'crossbody'],
+    'etuis':        ['étui', 'etui', 'fragments', 'porte-carte', 'petits accessoires', 'ケース', '小物'],
+    'portefeuilles': ['portefeuille', 'porte-monnaie', '財布', 'ポルトフォイユ', 'ウォレット'],
     'ceintures':    ['ceinture', 'ベルト'],
 }
 
