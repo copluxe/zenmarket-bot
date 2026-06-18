@@ -300,6 +300,41 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
     return items
 
 
+async def fetch_item_title(zm_url: str, cookies: dict) -> Optional[str]:
+    """Fetch the real product title from a ZenMarket item page.
+
+    The search grid only shows the Mercari category path; the item detail page
+    carries the actual seller-written product name in og:title / h1.
+    """
+    try:
+        async with AsyncSession(impersonate='chrome124') as session:
+            r = await session.get(zm_url, headers=_BROWSER_HEADERS, cookies=cookies, timeout=15)
+            if r.status_code != 200:
+                logger.debug('fetch_item_title: HTTP %d for %s', r.status_code, zm_url)
+                return None
+            soup = BeautifulSoup(r.text, 'html.parser')
+
+            # og:title is the most reliable — already in French/localized
+            og = soup.find('meta', property='og:title')
+            if og and og.get('content'):
+                t = og['content'].strip()
+                for sfx in [' - ZenMarket', ' | ZenMarket', ' – ZenMarket']:
+                    if t.endswith(sfx):
+                        t = t[: -len(sfx)].strip()
+                if len(t) > 3:
+                    return t
+
+            # h1 fallback
+            h1 = soup.find('h1')
+            if h1:
+                t = h1.get_text(strip=True)
+                if len(t) > 3:
+                    return t
+    except Exception as exc:
+        logger.debug('fetch_item_title failed for %s: %s', zm_url, exc)
+    return None
+
+
 def _items_from_next_data(html: str) -> list[dict]:
     """Extract items from Next.js __NEXT_DATA__ JSON embedded in the page."""
     soup = BeautifulSoup(html, 'html.parser')

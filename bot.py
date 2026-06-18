@@ -18,7 +18,7 @@ import database
 from channel_manager import setup_guild
 from embeds import ListingView, build_listing_embed
 from router import BRANDS, get_channels
-from scraper import Listing, fetch_listings
+from scraper import Listing, fetch_item_title, fetch_listings, _get_zenmarket_cookies
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -132,6 +132,7 @@ class ZenMarketBot(discord.Client):
     ):
         keyword = brand_info['keyword']
         listings = await fetch_listings(keyword, source)
+        zm_cookies = _get_zenmarket_cookies()
 
         for listing in listings:
             # Price filter
@@ -140,6 +141,17 @@ class ZenMarketBot(discord.Client):
             # Dedup
             if database.is_seen(listing.id):
                 continue
+
+            # Fetch the real product title from the ZenMarket item page.
+            # The search grid only shows the Mercari category path; the item
+            # detail page has the actual seller title in og:title / h1.
+            if zm_cookies and listing.zenmarket_url and listing.zenmarket_url.startswith('https://zenmarket'):
+                real_title = await fetch_item_title(listing.zenmarket_url, zm_cookies)
+                if real_title:
+                    listing.title = real_title
+                    logger.debug('Real title for %s: %s', listing.id, real_title)
+                await asyncio.sleep(0.8)  # be polite to ZenMarket
+
             database.mark_seen(listing.id, brand_key, source)
             await self._post_listing(listing, brand_key, brand_info)
 
