@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ('✨ POUR COMMENCER', [
         'comment-utiliser-le-bot',
-        'meilleures-affaires',
         'nouveautes-toutes-marques',
     ]),
     ('💬 • Général', [
@@ -27,7 +26,9 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ]),
     ('📊 STATISTIQUES', [
         'top-modeles-du-jour',
-        'records',
+        'records-marque-active',
+        'records-prix-bas',
+        'records-vente-rapide',
     ]),
     ('❤️ FAVORIS', [
         'favoris',
@@ -126,15 +127,17 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
 HELP_TEXT = """
 # 🤖 Mercari Japan Bot — Mode d'emploi
 
-Ce bot surveille **Mercari Japan** directement et publie les nouvelles annonces de maroquinerie de luxe en temps réel.
+Ce bot surveille **Mercari Japan** via ZenMarket et publie les nouvelles annonces de maroquinerie de luxe en temps réel.
 
 ## 📋 Channels disponibles
 - **#nouveautes-toutes-marques** — Toutes les nouvelles annonces, toutes marques confondues
-- **#meilleures-affaires** — Articles à prix réduit uniquement
 - **#[marque]-toutes-annonces** — Toutes les annonces d'une marque
 - **#[marque]-[modele]** — Annonces filtrées par modèle (ex: #lv-neverfull)
 - **#[marque]-[categorie]** — Annonces filtrées par catégorie (ex: #lv-pochettes)
-- **#top-modeles-du-jour** — Classement des modèles les plus listés chaque soir à 23h JST
+- **#top-modeles-du-jour** — Classement des modèles les plus listés (chaque soir à **23h JST / 16h heure française**)
+- **#records-marque-active** — Marque la plus active du jour — LV vs Gucci sacs (chaque soir à **23h JST / 16h heure française**)
+- **#records-prix-bas** — Prix le plus bas du jour vs moyenne 30 jours — LV & Gucci sacs (chaque soir à **23h JST / 16h heure française**)
+- **#records-vente-rapide** — Annonces vendues le plus rapidement — LV & Gucci sacs (chaque soir à **23h JST / 16h heure française**)
 - **#favoris** — Vos articles sauvegardés
 
 ## 💡 Utilisation
@@ -143,7 +146,7 @@ Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épin
 ## ⚙️ Configuration
 - Intervalle de vérification : toutes les 90 secondes par marque
 - Filtre prix max : configurable via `MAX_PRICE_YEN` dans .env
-- Source : Mercari Japan API directe
+- Source : Mercari Japan via ZenMarket
 """
 
 

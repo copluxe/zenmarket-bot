@@ -20,6 +20,13 @@ from embeds import ListingView, build_listing_embed
 from router import BRANDS, get_channels
 from scraper import Listing, fetch_item_title, fetch_listings, _get_zenmarket_cookies
 
+# Channel suffix keys that identify bag listings (used for records filtering)
+_BAG_CHANNEL_KEYS = ('sacs', 'cabas', 'sacoches', 'pochettes')
+
+# Brands tracked for daily records
+_RECORD_BRANDS = ['louis_vuitton', 'gucci']
+_RECORD_BRAND_NAMES = {'louis_vuitton': 'Louis Vuitton', 'gucci': 'Gucci'}
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -138,27 +145,34 @@ class ZenMarketBot(discord.Client):
             # Price filter
             if config.MAX_PRICE_YEN and listing.price_jpy > config.MAX_PRICE_YEN:
                 continue
-            # Dedup
+
             if database.is_seen(listing.id):
+                # Keep last_seen_at fresh so sold-fast records work correctly
+                database.update_last_seen(listing.id)
                 continue
 
             # Fetch the real product title from the ZenMarket item page.
-            # The search grid only shows the Mercari category path; the item
-            # detail page has the actual seller title in og:title / h1.
             if zm_cookies and listing.zenmarket_url and listing.zenmarket_url.startswith('https://zenmarket'):
                 real_title = await fetch_item_title(listing.zenmarket_url, zm_cookies)
                 if real_title:
                     listing.title = real_title
-                    logger.debug('Real title for %s: %s', listing.id, real_title)
-                await asyncio.sleep(0.8)  # be polite to ZenMarket
+                await asyncio.sleep(0.8)
 
-            database.mark_seen(listing.id, brand_key, source)
-            await self._post_listing(listing, brand_key, brand_info)
+            # Determine channels now so we can persist is_bag in the DB
+            channels_names, model_label = get_channels(brand_key, listing.title)
+            is_bag = any(key in ch for ch in channels_names for key in _BAG_CHANNEL_KEYS)
+
+            database.mark_seen(listing.id, brand_key, source,
+                               price_jpy=listing.price_jpy, is_bag=is_bag)
+            await self._post_listing(listing, brand_key, brand_info,
+                                     channels_names=channels_names, model_label=model_label)
 
     async def _post_listing(
-        self, listing: Listing, brand_key: str, brand_info: dict
+        self, listing: Listing, brand_key: str, brand_info: dict,
+        channels_names: list = None, model_label: str = None,
     ):
-        channels_names, model_label = get_channels(brand_key, listing.title)
+        if channels_names is None or model_label is None:
+            channels_names, model_label = get_channels(brand_key, listing.title)
 
         # Record stats
         database.record_stat(brand_key, model_label, listing.source)
@@ -174,11 +188,6 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
-
-        # If price is reduced, also send to #meilleures-affaires
-        if listing.original_price_jpy:
-            if 'meilleures-affaires' not in all_targets:
-                all_targets.append('meilleures-affaires')
 
         for ch_name in all_targets:
             ch = self.channel_map.get(ch_name)
@@ -220,6 +229,7 @@ class ZenMarketBot(discord.Client):
         now = datetime.now(JST)
         if now.hour == 23 and now.minute == 0:
             await self._post_daily_stats()
+            await self._post_daily_records()
 
     @daily_stats_loop.before_loop
     async def before_stats(self):
@@ -231,6 +241,75 @@ class ZenMarketBot(discord.Client):
         if not self.daily_stats_loop.is_running():
             logger.warning('Restarting daily_stats_loop after crash.')
             self.daily_stats_loop.restart()
+
+    async def _post_daily_records(self):
+        today = datetime.now(JST).strftime('%Y-%m-%d')
+
+        # 1. Most active brand (LV vs Gucci bags)
+        ch = self.channel_map.get('records-marque-active')
+        if ch:
+            activity = database.get_brand_activity(today, _RECORD_BRANDS)
+            if activity:
+                lines = [f'🏆 **MARQUE LA PLUS ACTIVE — {today}**',
+                         '*(LV & Gucci — sacs uniquement)*', '']
+                for i, row in enumerate(activity, 1):
+                    name = _RECORD_BRAND_NAMES.get(row['brand'], row['brand'])
+                    medal = ['🥇', '🥈'][i - 1] if i <= 2 else f'{i}.'
+                    lines.append(f'{medal} **{name}** — {row["count"]} nouvelles annonces')
+                try:
+                    await ch.send('\n'.join(lines))
+                except discord.HTTPException as exc:
+                    logger.error('records-marque-active post failed: %s', exc)
+
+        # 2. Best price deal (lowest vs 30-day average)
+        ch = self.channel_map.get('records-prix-bas')
+        if ch:
+            deals = database.get_price_records(today, _RECORD_BRANDS)
+            if deals:
+                lines = [f'💰 **PRIX LE PLUS BAS DU JOUR — {today}**',
+                         '*(LV & Gucci — sacs uniquement)*', '']
+                for deal in deals:
+                    name = _RECORD_BRAND_NAMES.get(deal['brand'], deal['brand'])
+                    lines.append(f'**{name}**')
+                    lines.append(f'  Prix le plus bas : ¥{deal["min_price"]:,}')
+                    if deal.get('avg_price'):
+                        diff = deal['avg_price'] - deal['min_price']
+                        pct = round(diff / deal['avg_price'] * 100)
+                        lines.append(
+                            f'  Moyenne 30 jours : ¥{deal["avg_price"]:,} '
+                            f'({pct}% en dessous de la moyenne)'
+                        )
+                    lines.append('')
+                try:
+                    await ch.send('\n'.join(lines))
+                except discord.HTTPException as exc:
+                    logger.error('records-prix-bas post failed: %s', exc)
+
+        # 3. Fastest sold
+        ch = self.channel_map.get('records-vente-rapide')
+        if ch:
+            fast = database.get_fastest_sold(today, _RECORD_BRANDS)
+            if fast:
+                lines = [f'⚡ **VENTE LA PLUS RAPIDE — {today}**',
+                         '*(LV & Gucci — sacs uniquement)*', '']
+                for item in fast:
+                    name = _RECORD_BRAND_NAMES.get(item['brand'], item['brand'])
+                    mins = int(item['lifetime_minutes'] or 0)
+                    if mins < 60:
+                        duration = f'{mins} minute{"s" if mins != 1 else ""}'
+                    else:
+                        h, m = divmod(mins, 60)
+                        duration = f'{h}h{m:02d}'
+                    lines.append(f'⚡ **{name}** — vendu en **{duration}**')
+                    if item.get('price_jpy'):
+                        lines.append(f'  Prix : ¥{item["price_jpy"]:,}')
+                    lines.append('')
+                try:
+                    await ch.send('\n'.join(lines))
+                except discord.HTTPException as exc:
+                    logger.error('records-vente-rapide post failed: %s', exc)
+
+        await asyncio.sleep(1)
 
     async def _post_daily_stats(self):
         ch = self.channel_map.get('top-modeles-du-jour')
