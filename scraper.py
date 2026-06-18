@@ -300,38 +300,91 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
     return items
 
 
-async def fetch_item_title(zm_url: str, cookies: dict) -> Optional[str]:
-    """Fetch the real product title from a ZenMarket item page.
+# Titles returned by ZenMarket redirect/error pages — not real product names.
+_BAD_TITLES: frozenset = frozenset({
+    'articles similaires', 'similar items', 'zenmarket', 'zenmarket.jp',
+    'page introuvable', 'not found', '404',
+})
 
-    The search grid only shows the Mercari category path; the item detail page
-    carries the actual seller-written product name in og:title / h1.
+
+def _is_real_title(t: str) -> bool:
+    return bool(t) and len(t) > 3 and t.lower().strip() not in _BAD_TITLES
+
+
+async def fetch_item_title(zm_url: str, cookies: dict) -> Optional[str]:
+    """Fetch the real product title.
+
+    Step 1: ZenMarket item page (French, if the item is still live).
+    Step 2: Mercari JP item page (Japanese, SSR og:title — always available).
+
+    ZenMarket sometimes redirects to 'Articles similaires' when an item sells
+    between the search scrape and this fetch, so the Mercari fallback is
+    essential for getting the actual seller-written title.
     """
+    m = re.search(r'itemCode=(m\d+)', zm_url, re.I)
+    item_id = m.group(1) if m else None
+
+    # --- Step 1: ZenMarket item page ---
     try:
         async with AsyncSession(impersonate='chrome124') as session:
             r = await session.get(zm_url, headers=_BROWSER_HEADERS, cookies=cookies, timeout=15)
-            if r.status_code != 200:
-                logger.debug('fetch_item_title: HTTP %d for %s', r.status_code, zm_url)
-                return None
-            soup = BeautifulSoup(r.text, 'html.parser')
-
-            # og:title is the most reliable — already in French/localized
-            og = soup.find('meta', property='og:title')
-            if og and og.get('content'):
-                t = og['content'].strip()
-                for sfx in [' - ZenMarket', ' | ZenMarket', ' – ZenMarket']:
-                    if t.endswith(sfx):
-                        t = t[: -len(sfx)].strip()
-                if len(t) > 3:
-                    return t
-
-            # h1 fallback
-            h1 = soup.find('h1')
-            if h1:
-                t = h1.get_text(strip=True)
-                if len(t) > 3:
-                    return t
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, 'html.parser')
+                og = soup.find('meta', property='og:title')
+                if og and og.get('content'):
+                    t = og['content'].strip()
+                    for sfx in [' - ZenMarket', ' | ZenMarket', ' – ZenMarket']:
+                        if t.endswith(sfx):
+                            t = t[: -len(sfx)].strip()
+                    if _is_real_title(t):
+                        logger.info('Title (ZenMarket) for %s: %s', item_id, t)
+                        return t
+                h1 = soup.find('h1')
+                if h1:
+                    t = h1.get_text(strip=True)
+                    if _is_real_title(t):
+                        logger.info('Title (ZenMarket h1) for %s: %s', item_id, t)
+                        return t
     except Exception as exc:
-        logger.debug('fetch_item_title failed for %s: %s', zm_url, exc)
+        logger.debug('ZenMarket title fetch failed for %s: %s', zm_url, exc)
+
+    # --- Step 2: Mercari JP item page (public SSR, og:title always set) ---
+    if item_id:
+        try:
+            mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
+            async with httpx.AsyncClient(
+                timeout=15, headers=_BROWSER_HEADERS, follow_redirects=True
+            ) as client:
+                r = await client.get(mercari_url)
+                if r.status_code == 200:
+                    soup = BeautifulSoup(r.text, 'html.parser')
+
+                    og = soup.find('meta', property='og:title')
+                    if og and og.get('content'):
+                        t = og['content'].strip()
+                        for sfx in [' - メルカリ', '｜メルカリ', ' | メルカリ']:
+                            if sfx in t:
+                                t = t[: t.rfind(sfx)].strip()
+                        if _is_real_title(t):
+                            logger.info('Title (Mercari) for %s: %s', item_id, t)
+                            return t
+
+                    # __NEXT_DATA__ contains item.name
+                    nd_tag = soup.find('script', id='__NEXT_DATA__')
+                    if nd_tag and nd_tag.string:
+                        data = json.loads(nd_tag.string)
+                        name = (
+                            data.get('props', {})
+                            .get('pageProps', {})
+                            .get('item', {})
+                            .get('name', '')
+                        )
+                        if _is_real_title(name):
+                            logger.info('Title (Mercari __NEXT_DATA__) for %s: %s', item_id, name)
+                            return name
+        except Exception as exc:
+            logger.debug('Mercari title fetch failed for %s: %s', item_id, exc)
+
     return None
 
 
