@@ -17,6 +17,14 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
         'meilleures-affaires',
         'nouveautes-toutes-marques',
     ]),
+    ('💬 • Général', [
+        'annonces',
+        'succes',
+        'legit',
+        'estim-prix',
+        'suggestions',
+        'chat',
+    ]),
     ('📊 STATISTIQUES', [
         'top-modeles-du-jour',
         'records',
@@ -163,7 +171,16 @@ async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
             if ch_name not in existing_channels:
                 logger.info('Creating channel: #%s', ch_name)
                 try:
-                    ch = await guild.create_text_channel(ch_name, category=category)
+                    # #annonces is read-only for regular members
+                    overwrites = None
+                    if ch_name == 'annonces':
+                        overwrites = {
+                            guild.default_role: discord.PermissionOverwrite(send_messages=False),
+                        }
+                    ch = await guild.create_text_channel(
+                        ch_name, category=category,
+                        **({"overwrites": overwrites} if overwrites else {}),
+                    )
                     channel_map[ch_name] = ch
                     existing_channels[ch_name] = ch
                 except discord.Forbidden:
