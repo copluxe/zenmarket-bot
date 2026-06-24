@@ -166,6 +166,7 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             or (img.get('alt', '') if img else '')
             or a_tag.get_text(strip=True)[:120]
         ).strip()
+        title = re.sub(r'\s*by\s*(メルカリ|Mercari)\s*$', '', title, flags=re.I).strip()
 
         container = a_tag
         for _ in range(3):
@@ -193,6 +194,9 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
                 price_digits = str(max(candidates))
 
         if not price_digits:
+            continue
+
+        if re.search(r'cashback|promo|\d+[,.]?\d*\s*€', title, re.I):
             continue
 
         if href.startswith('http'):
