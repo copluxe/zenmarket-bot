@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 MERCARI_SEARCH_URL = 'https://jp.mercari.com/search?keyword={keyword}&status=on_sale'
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
 ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/fr/mercari.aspx?q={query}'
-ZENMARKET_ITEM_URL = 'https://zenmarket.jp/fr/mercari.aspx?itemid={item_id}'
 
 _BROWSER_HEADERS = {
     'User-Agent': (
@@ -85,7 +84,7 @@ class Listing:
     status: str           # 'available' | 'sold'
     image_url: str
     url: str              # Mercari JP direct link
-    zenmarket_url: str    # ZenMarket direct item link for ordering
+    zenmarket_url: str    # ZenMarket direct item link
     source: str           # 'mercari'
     posted_ago: str
     direct_url: Optional[str] = None
@@ -184,7 +183,7 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             if len(digits) >= 3:
                 price_digits = digits
 
-        # Fallback: largest number ≥ 100 in the container (avoids picking sub-prices/fees)
+        # Fallback: largest number >= 100 in the container
         if not price_digits:
             candidates: list[int] = []
             for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
@@ -330,7 +329,7 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             posted_ago = _parse_posted_ago(created)
 
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
-            zenmarket_url = ZENMARKET_ITEM_URL.format(item_id=item_id)
+            zenmarket_url = f'https://zenmarket.jp/fr/mercari.aspx?itemCode={item_id}'
 
             listings.append(Listing(
                 id=f'mercari_{item_id}',
