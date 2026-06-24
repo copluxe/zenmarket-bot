@@ -73,7 +73,7 @@ def build_listing_embed(
     )
     link_value = f'[🇯🇵 Mercari Japan]({listing.url})'
     if listing.zenmarket_url:
-        link_value += f'\n[🛒 Voir sur ZenMarket]({listing.zenmarket_url})'
+        link_value += f'\n[🛒 Chercher sur ZenMarket]({listing.zenmarket_url})'
     embed.add_field(
         name='🔗 Liens',
         value=link_value,

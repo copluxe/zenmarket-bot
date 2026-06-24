@@ -19,9 +19,7 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ]),
     ('📊 STATISTIQUES', [
         'top-modeles-du-jour',
-        'records-marques-actives',
-        'records-prix-bas',
-        'records-cop-rapide',
+        'records',
     ]),
     ('❤️ FAVORIS', [
         'favoris',
@@ -117,36 +115,24 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
 HELP_TEXT = """
 # 🤖 Mercari Japan Bot — Mode d'emploi
 
-Ce bot surveille **Mercari Japan** et publie les nouvelles annonces de maroquinerie de luxe en temps réel pour 14 grandes marques.
+Ce bot surveille **Mercari Japan** directement et publie les nouvelles annonces de maroquinerie de luxe en temps réel.
 
-## 📋 Salons disponibles
-
-### ✨ Pour commencer
+## 📋 Channels disponibles
 - **#nouveautes-toutes-marques** — Toutes les nouvelles annonces, toutes marques confondues
-- **#meilleures-affaires** — Articles à prix réduit uniquement (prix barré détecté)
-
-### 📊 Statistiques & Records
-- **#records-marques-actives** — Classement des 14 marques par nombre d'annonces détectées aujourd'hui (mis à jour toutes les 90s)
-- **#records-prix-bas** — Prix record le plus bas jamais détecté par marque, sacs et sacs-à-main uniquement, avec lien direct vers l'annonce
-- **#records-cop-rapide** — Les 15 dernières annonces détectées en temps réel, avec lien direct et temps écoulé depuis la détection
-- **#top-modeles-du-jour** — TOP 7 des modèles les plus listés par marque, publié chaque soir à 23h JST
-
-### 🏷️ Par marque & modèle
-- **#[marque]-toutes-annonces** — Toutes les annonces d'une marque (ex: #lv-toutes-annonces)
-- **#[marque]-[modele]** — Annonces filtrées par modèle (ex: #lv-neverfull, #gucci-marmont)
-- **#[marque]-[categorie]** — Annonces filtrées par catégorie (ex: #lv-pochettes, #dior-sacs)
-
-### ❤️ Favoris
+- **#meilleures-affaires** — Articles à prix réduit uniquement
+- **#[marque]-toutes-annonces** — Toutes les annonces d'une marque
+- **#[marque]-[modele]** — Annonces filtrées par modèle (ex: #lv-neverfull)
+- **#[marque]-[categorie]** — Annonces filtrées par catégorie (ex: #lv-pochettes)
+- **#top-modeles-du-jour** — Classement des modèles les plus listés chaque soir à 23h JST
 - **#favoris** — Vos articles sauvegardés
 
 ## 💡 Utilisation
-Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épingler l'annonce dans **#favoris** avec votre tag.
-Les liens **🛒 Voir sur ZenMarket** pointent directement vers l'article pour pouvoir le commander.
+Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épingler l'annonce dans #favoris avec votre tag.
 
 ## ⚙️ Configuration
 - Intervalle de vérification : toutes les 90 secondes par marque
 - Filtre prix max : configurable via `MAX_PRICE_YEN` dans .env
-- Source : Mercari Japan directe
+- Source : Mercari Japan API directe
 """
 
 
@@ -184,15 +170,12 @@ async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
             else:
                 channel_map[ch_name] = existing_channels[ch_name]
 
-    # Update help message in #comment-utiliser-le-bot (edit if exists, post if empty)
+    # Post help message in #comment-utiliser-le-bot if it's empty
     help_ch: Optional[discord.TextChannel] = channel_map.get('comment-utiliser-le-bot')
     if help_ch:
         try:
-            history = [m async for m in help_ch.history(limit=10)]
-            bot_msg = next((m for m in history if m.author == guild.me), None)
-            if bot_msg:
-                await bot_msg.edit(content=HELP_TEXT)
-            else:
+            history = [m async for m in help_ch.history(limit=1)]
+            if not history:
                 await help_ch.send(HELP_TEXT)
         except discord.Forbidden:
             pass

@@ -18,7 +18,7 @@ import database
 from channel_manager import setup_guild
 from embeds import ListingView, build_listing_embed
 from router import BRANDS, get_channels
-from scraper import Listing, fetch_listings, jpy_to_eur
+from scraper import Listing, fetch_listings
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -48,37 +48,6 @@ logger = logging.getLogger(__name__)
 # Japan Standard Time (UTC+9)
 JST = timezone(timedelta(hours=9))
 
-# Channels that indicate a bag listing (sac / sac-à-main)
-_BAG_CHANNEL_SUFFIXES = ('-sacs', '-sacs-a-main')
-_BAG_MODEL_CHANNELS = {
-    'lv-neverfull', 'lv-keepall', 'lv-speedy', 'lv-alma',
-    'lv-ellipse', 'lv-saint-cloud', 'lv-noe',
-    'gucci-soho', 'gucci-jackie', 'gucci-gg-supreme', 'gucci-marmont',
-    'dior-trotter', 'dior-bowling', 'dior-boston', 'dior-lady-dior',
-    'coach-tabby', 'coach-lana', 'coach-rowan',
-    'celine-boston',
-}
-
-
-def _is_bag(channels: list[str]) -> bool:
-    for ch in channels:
-        if ch.endswith(_BAG_CHANNEL_SUFFIXES) or ch in _BAG_MODEL_CHANNELS:
-            return True
-    return False
-
-
-def _elapsed_str(posted_at_str: str) -> str:
-    try:
-        posted = datetime.strptime(posted_at_str, '%Y-%m-%d %H:%M:%S')
-        elapsed = int((datetime.utcnow() - posted).total_seconds())
-        if elapsed < 60:
-            return f'{elapsed}s'
-        if elapsed < 3600:
-            return f'{elapsed // 60}min'
-        return f'{elapsed // 3600}h'
-    except Exception:
-        return '?'
-
 
 # ---------------------------------------------------------------------------
 # Bot
@@ -98,7 +67,6 @@ class ZenMarketBot(discord.Client):
         # The custom_id prefix 'save_' matches SaveButton's custom_id pattern.
         # We add a generic fallback view that discord.py will route by custom_id.
         self.persistent_views_added = False
-        self._records_msg_ids: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -146,7 +114,6 @@ class ZenMarketBot(discord.Client):
         for brand_key, brand_info in BRANDS.items():
             await self._process_brand_source(brand_key, brand_info, 'mercari')
             await asyncio.sleep(2)
-        await self._update_records_channels()
 
     @scrape_loop.before_loop
     async def before_scrape(self):
@@ -173,14 +140,7 @@ class ZenMarketBot(discord.Client):
             # Dedup
             if database.is_seen(listing.id):
                 continue
-            channels_names, _ = get_channels(brand_key, listing.title)
-            database.mark_seen(
-                listing.id, brand_key, source,
-                title=listing.title,
-                price_jpy=listing.price_jpy,
-                zenmarket_url=listing.zenmarket_url,
-                is_bag=_is_bag(channels_names),
-            )
+            database.mark_seen(listing.id, brand_key, source)
             await self._post_listing(listing, brand_key, brand_info)
 
     async def _post_listing(
@@ -221,68 +181,6 @@ class ZenMarketBot(discord.Client):
                 logger.error('Failed to post in #%s: %s', ch_name, exc)
             # Small sleep to respect Discord rate limits
             await asyncio.sleep(0.5)
-
-    # ------------------------------------------------------------------
-    # Records channels
-    # ------------------------------------------------------------------
-
-    async def _send_or_edit_record(self, channel_name: str, content: str):
-        ch = self.channel_map.get(channel_name)
-        if not ch:
-            return
-        msg_id = self._records_msg_ids.get(channel_name)
-        if msg_id:
-            try:
-                msg = await ch.fetch_message(msg_id)
-                await msg.edit(content=content)
-                return
-            except (discord.NotFound, discord.HTTPException):
-                pass
-        try:
-            msg = await ch.send(content)
-            self._records_msg_ids[channel_name] = msg.id
-        except discord.HTTPException as exc:
-            logger.error('Failed to update #%s: %s', channel_name, exc)
-
-    async def _update_records_channels(self):
-        today = datetime.now(JST).strftime('%Y-%m-%d')
-
-        # --- records-marques-actives: all 14 brands, sorted by activity, no links ---
-        counts_today = {row['brand']: row['total'] for row in database.get_brand_counts_today()}
-        ranked = sorted(BRANDS.items(), key=lambda x: counts_today.get(x[0], 0), reverse=True)
-        lines = [f'🏆 **MARQUES LES PLUS ACTIVES — {today}**', '']
-        medals = ['🥇', '🥈', '🥉']
-        for i, (key, info) in enumerate(ranked, 1):
-            count = counts_today.get(key, 0)
-            prefix = medals[i - 1] if i <= 3 else f'{i}.'
-            s = 's' if count > 1 else ''
-            lines.append(f'{prefix} **{info["name_fr"]}** — {count} annonce{s}')
-        await self._send_or_edit_record('records-marques-actives', '\n'.join(lines))
-
-        # --- records-prix-bas: sacs & sacs-à-main uniquement ---
-        cheapest = database.get_cheapest_per_brand()
-        if cheapest:
-            lines = ['💰 **RECORDS PRIX BAS — sacs & sacs-à-main, tous temps**', '']
-            for row in cheapest:
-                info = BRANDS.get(row['brand'], {})
-                name = info.get('name_fr', row['brand'])
-                eur = jpy_to_eur(row['price_jpy'])
-                title = (row['title'] or 'Article')[:60]
-                lines.append(f'🔻 **{name}** — [{title}]({row["zenmarket_url"]}) — ¥{row["price_jpy"]:,} (€{eur})')
-            await self._send_or_edit_record('records-prix-bas', '\n'.join(lines))
-
-        # --- records-cop-rapide: 15 dernières annonces avec temps écoulé ---
-        recent = database.get_recent_listings(limit=15)
-        if recent:
-            lines = ['⚡ **DERNIÈRES ANNONCES DÉTECTÉES**', '']
-            for row in recent:
-                info = BRANDS.get(row['brand'], {})
-                name = info.get('name_fr', row['brand'])
-                eur = jpy_to_eur(row['price_jpy'])
-                title = (row['title'] or 'Article')[:55]
-                ago = _elapsed_str(row['posted_at'])
-                lines.append(f'• **{name}** — [{title}]({row["zenmarket_url"]}) — ¥{row["price_jpy"]:,} (€{eur}) • il y a {ago}')
-            await self._send_or_edit_record('records-cop-rapide', '\n'.join(lines))
 
     # ------------------------------------------------------------------
     # Watchdog — restarts loops if they die silently
