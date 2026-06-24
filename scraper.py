@@ -197,8 +197,10 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
 
         if href.startswith('http'):
             zm_url = href
-        else:
+        elif href.startswith('/'):
             zm_url = 'https://zenmarket.jp' + href
+        else:
+            zm_url = 'https://zenmarket.jp/' + href
 
         items.append({
             'id': item_id,
@@ -334,7 +336,7 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
             zenmarket_url = (
                 item.get('zenmarket_url')
-                or f'https://zenmarket.jp/mercari.aspx?itemCode={item_id}'
+                or f'https://zenmarket.jp/mercariproduct.aspx/?itemCode={item_id}'
             )
 
             listings.append(Listing(
