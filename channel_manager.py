@@ -19,7 +19,9 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ]),
     ('📊 STATISTIQUES', [
         'top-modeles-du-jour',
-        'records',
+        'records-marques-actives',
+        'records-prix-bas',
+        'records-cop-rapide',
     ]),
     ('❤️ FAVORIS', [
         'favoris',
