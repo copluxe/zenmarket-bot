@@ -117,24 +117,36 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
 HELP_TEXT = """
 # 🤖 Mercari Japan Bot — Mode d'emploi
 
-Ce bot surveille **Mercari Japan** directement et publie les nouvelles annonces de maroquinerie de luxe en temps réel.
+Ce bot surveille **Mercari Japan** et publie les nouvelles annonces de maroquinerie de luxe en temps réel pour 14 grandes marques.
 
-## 📋 Channels disponibles
+## 📋 Salons disponibles
+
+### ✨ Pour commencer
 - **#nouveautes-toutes-marques** — Toutes les nouvelles annonces, toutes marques confondues
-- **#meilleures-affaires** — Articles à prix réduit uniquement
-- **#[marque]-toutes-annonces** — Toutes les annonces d'une marque
-- **#[marque]-[modele]** — Annonces filtrées par modèle (ex: #lv-neverfull)
-- **#[marque]-[categorie]** — Annonces filtrées par catégorie (ex: #lv-pochettes)
-- **#top-modeles-du-jour** — Classement des modèles les plus listés chaque soir à 23h JST
+- **#meilleures-affaires** — Articles à prix réduit uniquement (prix barré détecté)
+
+### 📊 Statistiques & Records
+- **#records-marques-actives** — Classement des 14 marques par nombre d'annonces détectées aujourd'hui (mis à jour toutes les 90s)
+- **#records-prix-bas** — Prix record le plus bas jamais détecté par marque, sacs et sacs-à-main uniquement, avec lien direct vers l'annonce
+- **#records-cop-rapide** — Les 15 dernières annonces détectées en temps réel, avec lien direct et temps écoulé depuis la détection
+- **#top-modeles-du-jour** — TOP 7 des modèles les plus listés par marque, publié chaque soir à 23h JST
+
+### 🏷️ Par marque & modèle
+- **#[marque]-toutes-annonces** — Toutes les annonces d'une marque (ex: #lv-toutes-annonces)
+- **#[marque]-[modele]** — Annonces filtrées par modèle (ex: #lv-neverfull, #gucci-marmont)
+- **#[marque]-[categorie]** — Annonces filtrées par catégorie (ex: #lv-pochettes, #dior-sacs)
+
+### ❤️ Favoris
 - **#favoris** — Vos articles sauvegardés
 
 ## 💡 Utilisation
-Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épingler l'annonce dans #favoris avec votre tag.
+Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épingler l'annonce dans **#favoris** avec votre tag.
+Les liens **🛒 Voir sur ZenMarket** pointent directement vers l'article pour pouvoir le commander.
 
 ## ⚙️ Configuration
 - Intervalle de vérification : toutes les 90 secondes par marque
 - Filtre prix max : configurable via `MAX_PRICE_YEN` dans .env
-- Source : Mercari Japan API directe
+- Source : Mercari Japan directe
 """
 
 

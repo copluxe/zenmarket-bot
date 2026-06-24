@@ -21,11 +21,17 @@ def init_db():
         title         TEXT,
         price_jpy     INTEGER,
         zenmarket_url TEXT,
+        is_bag        INTEGER DEFAULT 0,
         posted_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
     # Migrate existing tables that lack the new columns
-    for col, col_type in [('title', 'TEXT'), ('price_jpy', 'INTEGER'), ('zenmarket_url', 'TEXT')]:
+    for col, col_type in [
+        ('title', 'TEXT'),
+        ('price_jpy', 'INTEGER'),
+        ('zenmarket_url', 'TEXT'),
+        ('is_bag', 'INTEGER DEFAULT 0'),
+    ]:
         try:
             c.execute(f'ALTER TABLE seen_listings ADD COLUMN {col} {col_type}')
         except Exception:
@@ -61,14 +67,15 @@ def mark_seen(
     title: str = None,
     price_jpy: int = None,
     zenmarket_url: str = None,
+    is_bag: bool = False,
 ):
     conn = get_connection()
     c = conn.cursor()
     c.execute(
         '''INSERT OR IGNORE INTO seen_listings
-           (listing_id, brand, source, title, price_jpy, zenmarket_url)
-           VALUES (?, ?, ?, ?, ?, ?)''',
-        (listing_id, brand, source, title, price_jpy, zenmarket_url),
+           (listing_id, brand, source, title, price_jpy, zenmarket_url, is_bag)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (listing_id, brand, source, title, price_jpy, zenmarket_url, int(is_bag)),
     )
     conn.commit()
     conn.close()
@@ -106,6 +113,7 @@ def get_brand_counts_today() -> list:
 
 
 def get_cheapest_per_brand() -> list:
+    """Cheapest bag (sac / sac-à-main) per brand, all-time record."""
     conn = get_connection()
     c = conn.cursor()
     c.execute(
@@ -114,10 +122,10 @@ def get_cheapest_per_brand() -> list:
            INNER JOIN (
                SELECT brand, MIN(price_jpy) AS min_price
                FROM seen_listings
-               WHERE price_jpy IS NOT NULL AND zenmarket_url IS NOT NULL
+               WHERE price_jpy IS NOT NULL AND zenmarket_url IS NOT NULL AND is_bag = 1
                GROUP BY brand
            ) m ON s.brand = m.brand AND s.price_jpy = m.min_price
-           WHERE s.zenmarket_url IS NOT NULL
+           WHERE s.zenmarket_url IS NOT NULL AND s.is_bag = 1
            GROUP BY s.brand
            ORDER BY s.price_jpy ASC''',
     )
@@ -130,7 +138,7 @@ def get_recent_listings(limit: int = 15) -> list:
     conn = get_connection()
     c = conn.cursor()
     c.execute(
-        '''SELECT brand, title, price_jpy, zenmarket_url
+        '''SELECT brand, title, price_jpy, zenmarket_url, posted_at
            FROM seen_listings
            WHERE zenmarket_url IS NOT NULL AND title IS NOT NULL AND price_jpy IS NOT NULL
            ORDER BY posted_at DESC
