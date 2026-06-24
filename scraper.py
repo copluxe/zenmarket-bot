@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 MERCARI_SEARCH_URL = 'https://jp.mercari.com/search?keyword={keyword}&status=on_sale'
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
-ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/mercari.aspx?q={query}'
-ZENMARKET_ITEM_URL = 'https://zenmarket.jp/mercari.aspx?itemid={item_id}'
+ZENMARKET_SEARCH_URL = 'https://zenmarket.jp/fr/mercari.aspx?q={query}'
+ZENMARKET_ITEM_URL = 'https://zenmarket.jp/fr/mercari.aspx?itemid={item_id}'
 
 _BROWSER_HEADERS = {
     'User-Agent': (
@@ -31,7 +31,7 @@ _BROWSER_HEADERS = {
         'Chrome/124.0.0.0 Safari/537.36'
     ),
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'ja-JP,ja;q=0.9',
+    'Accept-Language': 'fr-FR,fr;q=0.9,ja;q=0.8,en;q=0.7',
     'Accept-Encoding': 'gzip, deflate, br',
     'Referer': 'https://zenmarket.jp/',
 }
@@ -168,14 +168,33 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             or a_tag.get_text(strip=True)[:120]
         ).strip()
 
-        # Walk up to a containing block, then scan it for a price string
-        container = a_tag.parent or a_tag
+        # Walk up 3 levels to get a wide enough card container
+        container = a_tag
+        for _ in range(3):
+            if container.parent:
+                container = container.parent
+            else:
+                break
+
+        # Priority: element with "price" in its class name
         price_digits = ''
-        for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
-            digits = re.sub(r'[^\d]', '', str(text_node))
+        price_el = container.find(class_=re.compile(r'price', re.I))
+        if price_el:
+            digits = re.sub(r'[^\d]', '', price_el.get_text())
             if len(digits) >= 3:
                 price_digits = digits
-                break
+
+        # Fallback: largest number ≥ 100 in the container (avoids picking sub-prices/fees)
+        if not price_digits:
+            candidates: list[int] = []
+            for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
+                digits = re.sub(r'[^\d]', '', str(text_node))
+                if len(digits) >= 3:
+                    val = int(digits)
+                    if val >= 100:
+                        candidates.append(val)
+            if candidates:
+                price_digits = str(max(candidates))
 
         if not price_digits:
             continue
