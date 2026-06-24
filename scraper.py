@@ -195,6 +195,9 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
         if not price_digits:
             continue
 
+        if re.search(r'cashback|promo|\d+[,.]?\d*\s*€', title, re.I):
+            continue
+
         items.append({
             'id': item_id,
             'name': title,
