@@ -198,6 +198,13 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
         if re.search(r'cashback|promo|\d+[,.]?\d*\s*€', title, re.I):
             continue
 
+        if href.startswith('http'):
+            zm_url = href
+        elif href.startswith('/'):
+            zm_url = 'https://zenmarket.jp' + href
+        else:
+            zm_url = 'https://zenmarket.jp/' + href
+
         items.append({
             'id': item_id,
             'name': title,
@@ -206,6 +213,7 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             'item_condition': {},
             'status': 'on_sale',
             'created': None,
+            'zenmarket_url': zm_url,
         })
 
     return items
@@ -329,7 +337,10 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             posted_ago = _parse_posted_ago(created)
 
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
-            zenmarket_url = f'https://zenmarket.jp/mercari.aspx?itemCode={item_id}'
+            zenmarket_url = (
+                item.get('zenmarket_url')
+                or f'https://zenmarket.jp/mercariproduct.aspx/?itemCode={item_id}'
+            )
 
             listings.append(Listing(
                 id=f'mercari_{item_id}',
