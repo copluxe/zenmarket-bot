@@ -167,7 +167,6 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             or a_tag.get_text(strip=True)[:120]
         ).strip()
 
-        # Walk up 3 levels to get a wide enough card container
         container = a_tag
         for _ in range(3):
             if container.parent:
@@ -175,7 +174,6 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             else:
                 break
 
-        # Priority: element with "price" in its class name
         price_digits = ''
         price_el = container.find(class_=re.compile(r'price', re.I))
         if price_el:
@@ -183,7 +181,6 @@ def _items_from_zenmarket_html(html: str) -> list[dict]:
             if len(digits) >= 3:
                 price_digits = digits
 
-        # Fallback: largest number >= 100 in the container
         if not price_digits:
             candidates: list[int] = []
             for text_node in container.find_all(string=re.compile(r'[\d,]{3,}')):
@@ -329,7 +326,7 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             posted_ago = _parse_posted_ago(created)
 
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
-            zenmarket_url = f'https://zenmarket.jp/fr/mercari.aspx?itemCode={item_id}'
+            zenmarket_url = f'https://zenmarket.jp/mercari.aspx?itemCode={item_id}'
 
             listings.append(Listing(
                 id=f'mercari_{item_id}',
