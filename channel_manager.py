@@ -184,12 +184,15 @@ async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
             else:
                 channel_map[ch_name] = existing_channels[ch_name]
 
-    # Post help message in #comment-utiliser-le-bot if it's empty
+    # Update help message in #comment-utiliser-le-bot (edit if exists, post if empty)
     help_ch: Optional[discord.TextChannel] = channel_map.get('comment-utiliser-le-bot')
     if help_ch:
         try:
-            history = [m async for m in help_ch.history(limit=1)]
-            if not history:
+            history = [m async for m in help_ch.history(limit=10)]
+            bot_msg = next((m for m in history if m.author == guild.me), None)
+            if bot_msg:
+                await bot_msg.edit(content=HELP_TEXT)
+            else:
                 await help_ch.send(HELP_TEXT)
         except discord.Forbidden:
             pass
