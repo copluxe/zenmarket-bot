@@ -1,49 +1,21 @@
 """
-Mercari Japan scraper — fetches directly from jp.mercari.com using curl-cffi
-browser impersonation. ZenMarket URLs are constructed from Mercari item IDs.
-No cookies required.
+Mercari Japan scraper — uses Playwright + Google Chrome to render pages
+and intercept the internal API response. ZenMarket URLs are constructed
+from Mercari item IDs. No cookies required.
 """
 
 import asyncio
-import json
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
 
 import httpx
-from bs4 import BeautifulSoup
-from curl_cffi.requests import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-MERCARI_SEARCH_URL = (
-    'https://jp.mercari.com/search?keyword={keyword}'
-    '&status=on_sale&sort=created_time&order=desc'
-)
 MERCARI_ITEM_URL = 'https://jp.mercari.com/item/{item_id}'
-
-_MERCARI_HEADERS = {
-    'User-Agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/124.0.0.0 Safari/537.36'
-    ),
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Referer': 'https://jp.mercari.com/',
-    'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Windows"',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
-    'Sec-Fetch-User': '?1',
-    'Upgrade-Insecure-Requests': '1',
-}
 
 CONDITION_MAP = {
     '新品、未使用':       'Neuf',
@@ -127,86 +99,6 @@ def _parse_posted_ago(timestamp: Optional[int]) -> str:
     return f'{d} jour{"s" if d > 1 else ""}'
 
 
-def _items_from_next_data(html: str) -> list[dict]:
-    """Extract items from Next.js __NEXT_DATA__ JSON embedded in the page."""
-    soup = BeautifulSoup(html, 'html.parser')
-    tag = soup.find('script', id='__NEXT_DATA__')
-    if not tag or not tag.string:
-        return []
-    try:
-        data = json.loads(tag.string)
-    except json.JSONDecodeError:
-        return []
-
-    page_props = data.get('props', {}).get('pageProps', {})
-
-    # Try multiple possible paths in Mercari's Next.js page structure
-    for path in [
-        ['items'],
-        ['searchResult', 'items'],
-        ['initialSearchList', 'items'],
-        ['searchListResponse', 'items'],
-        ['data', 'items'],
-        ['search', 'items'],
-        ['result', 'items'],
-    ]:
-        obj = page_props
-        for key in path:
-            obj = obj.get(key, {}) if isinstance(obj, dict) else {}
-        if isinstance(obj, list) and obj:
-            return obj
-
-    return []
-
-
-def _items_from_html(html: str) -> list[dict]:
-    """Fallback: extract listing data from Mercari HTML anchor tags."""
-    soup = BeautifulSoup(html, 'html.parser')
-    items = []
-    seen_ids: set[str] = set()
-
-    for a_tag in soup.find_all('a', href=re.compile(r'/item/m\d+')):
-        href = a_tag.get('href', '')
-        m = re.search(r'/item/(m\d+)', href)
-        if not m:
-            continue
-        item_id = m.group(1)
-        if item_id in seen_ids:
-            continue
-        seen_ids.add(item_id)
-
-        img = a_tag.find('img')
-        image_url = img.get('src', '') if img else ''
-
-        title = (
-            a_tag.get('aria-label', '')
-            or a_tag.get('title', '')
-            or (img.get('alt', '') if img else '')
-        ).strip()
-
-        price_text = ''
-        for candidate in a_tag.find_all(string=re.compile(r'[¥￥]?\s*[\d,]+')):
-            if re.search(r'[\d,]{2,}', str(candidate)):
-                price_text = str(candidate)
-                break
-
-        digits = re.sub(r'[^\d]', '', price_text)
-        if not digits:
-            continue
-
-        items.append({
-            'id': item_id,
-            'name': title,
-            'price': int(digits),
-            'thumbnails': [image_url] if image_url else [],
-            'item_condition': {},
-            'status': 'on_sale',
-            'created': None,
-        })
-
-    return items
-
-
 def _parse_listings(items: list[dict], query: str) -> list[Listing]:
     if not items:
         return []
@@ -273,28 +165,88 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
     return listings
 
 
-async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 3) -> list[Listing]:
-    """Fetch listings directly from Mercari Japan using curl-cffi browser impersonation."""
-    encoded = quote(keyword)
-    url = MERCARI_SEARCH_URL.format(keyword=encoded)
+# ---------------------------------------------------------------------------
+# Playwright browser singleton
+# ---------------------------------------------------------------------------
 
-    delay = 2
-    for attempt in range(max_retries):
+_pw = None
+_browser = None
+
+
+async def _ensure_browser():
+    global _pw, _browser
+    from playwright.async_api import async_playwright
+
+    if _browser is not None:
         try:
-            async with AsyncSession(impersonate='chrome124') as session:
-                response = await session.get(url, headers=_MERCARI_HEADERS)
-                response.raise_for_status()
-                html = response.text
+            if _browser.is_connected():
+                return _browser
+        except Exception:
+            pass
 
-            items = _items_from_next_data(html)
-            if not items:
-                logger.debug('No __NEXT_DATA__ items for "%s", trying HTML parse', keyword)
-                items = _items_from_html(html)
+    if _pw is None:
+        _pw = await async_playwright().start()
 
-            if not items:
-                logger.warning('No items found for "%s"', keyword)
+    _browser = await _pw.chromium.launch(
+        headless=True,
+        channel='chrome',
+        args=[
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-setuid-sandbox',
+            '--disable-gpu',
+        ],
+    )
+    logger.info('Chrome browser launched')
+    return _browser
 
-            listings = _parse_listings(items, keyword)
+
+async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 3) -> list[Listing]:
+    """Fetch listings from Mercari Japan using a real Chrome browser."""
+    global _browser
+    encoded = quote(keyword)
+    url = (
+        f'https://jp.mercari.com/search?keyword={encoded}'
+        '&status=on_sale&sort=created_time&order=desc'
+    )
+
+    for attempt in range(max_retries):
+        context = None
+        try:
+            browser = await _ensure_browser()
+            context = await browser.new_context(
+                locale='ja-JP',
+                user_agent=(
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/124.0.0.0 Safari/537.36'
+                ),
+            )
+            page = await context.new_page()
+
+            captured_items: list[dict] = []
+
+            async def on_response(response):
+                if 'entities:search' in response.url:
+                    try:
+                        data = await response.json()
+                        if isinstance(data.get('items'), list):
+                            captured_items.extend(data['items'])
+                    except Exception:
+                        pass
+
+            page.on('response', on_response)
+
+            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            await page.wait_for_timeout(5000)
+
+            await context.close()
+            context = None
+
+            if not captured_items:
+                logger.warning('No items captured for "%s"', keyword)
+
+            listings = _parse_listings(captured_items, keyword)
             logger.info('Fetched %d listings for "%s" via Mercari', len(listings), keyword)
             return listings
 
@@ -303,8 +255,13 @@ async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int
                 'fetch_listings attempt %d/%d for "%s": %s',
                 attempt + 1, max_retries, keyword, exc,
             )
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            _browser = None
             if attempt < max_retries - 1:
-                await asyncio.sleep(delay)
-                delay *= 2
+                await asyncio.sleep(5)
 
     return []
