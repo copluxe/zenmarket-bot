@@ -1,12 +1,13 @@
 """
-Mercari Japan scraper — uses Playwright + Google Chrome to render pages
-and intercept the internal API response. ZenMarket URLs are constructed
-from Mercari item IDs. No cookies required.
+Mercari Japan scraper — uses synchronous Playwright + Google Chrome in a
+thread executor so it works correctly inside discord.py's event loop.
+ZenMarket URLs are constructed from Mercari item IDs.
 """
 
 import asyncio
 import logging
 import time
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
@@ -102,17 +103,13 @@ def _parse_posted_ago(timestamp: Optional[int]) -> str:
 def _parse_listings(items: list[dict], query: str) -> list[Listing]:
     if not items:
         return []
-
     listings: list[Listing] = []
-
     for item in items:
         try:
             item_id = str(item.get('id', '')).strip()
             if not item_id:
                 continue
-
             title = str(item.get('name', '') or item.get('title', '')).strip()
-
             price_jpy = item.get('price', 0)
             if not isinstance(price_jpy, int):
                 try:
@@ -121,29 +118,23 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
                     continue
             if not price_jpy:
                 continue
-
             image_url = str(
                 item.get('thumbnails', [None])[0]
                 if item.get('thumbnails')
                 else item.get('image_url') or item.get('photo') or ''
             ).strip()
-
             condition_raw = str(
                 item.get('item_condition', {}).get('name', '')
                 if isinstance(item.get('item_condition'), dict)
                 else item.get('item_condition') or item.get('condition') or ''
             ).strip()
             condition_fr = _map_condition(condition_raw)
-
             item_status_raw = str(item.get('status', '') or item.get('item_status', '')).lower()
             status = 'sold' if ('sold' in item_status_raw or '売り切れ' in item_status_raw) else 'available'
-
             created = item.get('created') or item.get('created_time') or item.get('updated')
             posted_ago = _parse_posted_ago(created)
-
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
             zenmarket_url = f'https://zenmarket.jp/mercariproduct.aspx/?itemCode={item_id}'
-
             listings.append(Listing(
                 id=f'mercari_{item_id}',
                 title=title or f'Article {item_id}',
@@ -161,107 +152,92 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             ))
         except Exception as exc:
             logger.debug('Item parse error: %s', exc)
-
     return listings
 
 
 # ---------------------------------------------------------------------------
-# Playwright browser singleton
+# Synchronous Playwright fetch (runs in thread executor)
 # ---------------------------------------------------------------------------
 
-_pw = None
-_browser = None
+_browser_lock = threading.Lock()
+_sync_pw = None
+_sync_browser = None
 
 
-async def _ensure_browser():
-    global _pw, _browser
-    from playwright.async_api import async_playwright
-
-    if _browser is not None:
-        try:
-            if _browser.is_connected():
-                return _browser
-        except Exception:
-            pass
-
-    if _pw is None:
-        _pw = await async_playwright().start()
-
-    _browser = await _pw.chromium.launch(
-        headless=True,
-        channel='chrome',
-        args=[
-            '--no-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-setuid-sandbox',
-            '--disable-gpu',
-        ],
-    )
-    logger.info('Chrome browser launched')
-    return _browser
+def _get_browser():
+    global _sync_pw, _sync_browser
+    from playwright.sync_api import sync_playwright
+    with _browser_lock:
+        if _sync_browser is not None:
+            try:
+                if _sync_browser.is_connected():
+                    return _sync_browser
+            except Exception:
+                pass
+        if _sync_pw is None:
+            _sync_pw = sync_playwright().start()
+        _sync_browser = _sync_pw.chromium.launch(
+            headless=True,
+            channel='chrome',
+            args=['--no-sandbox', '--disable-dev-shm-usage',
+                  '--disable-setuid-sandbox', '--disable-gpu'],
+        )
+        logger.info('Chrome browser started')
+        return _sync_browser
 
 
-async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 3) -> list[Listing]:
-    """Fetch listings from Mercari Japan using a real Chrome browser."""
-    global _browser
+def _fetch_sync(keyword: str) -> list[dict]:
+    """Fetch Mercari search results synchronously via Chrome. Runs in a thread."""
+    global _sync_browser
     encoded = quote(keyword)
     url = (
         f'https://jp.mercari.com/search?keyword={encoded}'
         '&status=on_sale&sort=created_time&order=desc'
     )
+    captured: list[dict] = []
 
-    for attempt in range(max_retries):
-        context = None
-        try:
-            browser = await _ensure_browser()
-            context = await browser.new_context(
-                locale='ja-JP',
-                user_agent=(
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                    'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/124.0.0.0 Safari/537.36'
-                ),
-            )
-            page = await context.new_page()
+    try:
+        browser = _get_browser()
+        context = browser.new_context(locale='ja-JP')
+        page = context.new_page()
 
-            captured_items: list[dict] = []
-
-            async def on_response(response):
-                if 'entities:search' in response.url:
-                    try:
-                        data = await response.json()
-                        if isinstance(data.get('items'), list):
-                            captured_items.extend(data['items'])
-                    except Exception:
-                        pass
-
-            page.on('response', on_response)
-
-            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
-            await page.wait_for_timeout(5000)
-
-            await context.close()
-            context = None
-
-            if not captured_items:
-                logger.warning('No items captured for "%s"', keyword)
-
-            listings = _parse_listings(captured_items, keyword)
-            logger.info('Fetched %d listings for "%s" via Mercari', len(listings), keyword)
-            return listings
-
-        except Exception as exc:
-            logger.warning(
-                'fetch_listings attempt %d/%d for "%s": %s',
-                attempt + 1, max_retries, keyword, exc,
-            )
-            if context:
+        def on_response(response):
+            if 'entities:search' in response.url:
                 try:
-                    await context.close()
+                    data = response.json()
+                    if isinstance(data.get('items'), list):
+                        captured.extend(data['items'])
                 except Exception:
                     pass
-            _browser = None
-            if attempt < max_retries - 1:
-                await asyncio.sleep(5)
 
+        page.on('response', on_response)
+        page.goto(url, wait_until='domcontentloaded', timeout=30000)
+        page.wait_for_timeout(6000)
+        context.close()
+
+    except Exception as exc:
+        logger.warning('Chrome fetch error for "%s": %s', keyword, exc)
+        with _browser_lock:
+            _sync_browser = None
+
+    return captured
+
+
+async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 2) -> list[Listing]:
+    """Fetch listings from Mercari Japan. Runs Chrome in a thread executor."""
+    for attempt in range(max_retries):
+        try:
+            captured = await asyncio.to_thread(_fetch_sync, keyword)
+            if not captured:
+                logger.warning('No items captured for "%s" (attempt %d)', keyword, attempt + 1)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(3)
+                    continue
+            listings = _parse_listings(captured, keyword)
+            logger.info('Fetched %d listings for "%s" via Mercari', len(listings), keyword)
+            return listings
+        except Exception as exc:
+            logger.warning('fetch_listings error for "%s": %s', keyword, exc)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(3)
     return []
