@@ -194,40 +194,45 @@ def _fetch_sync(keyword: str) -> list[dict]:
         f'https://jp.mercari.com/search?keyword={encoded}'
         '&status=on_sale&sort=created_time&order=desc'
     )
-    captured: list[dict] = []
 
     try:
         browser = _get_browser()
         context = browser.new_context(locale='ja-JP')
         page = context.new_page()
 
-        def on_response(response):
-            if 'entities:search' in response.url:
-                try:
-                    data = response.json()
-                    if isinstance(data.get('items'), list):
-                        captured.extend(data['items'])
-                except Exception:
-                    pass
+        try:
+            # Wait explicitly for the Mercari search API response
+            with page.expect_response(
+                lambda r: 'entities:search' in r.url,
+                timeout=20000,
+            ) as response_info:
+                page.goto(url, wait_until='commit', timeout=30000)
 
-        page.on('response', on_response)
-        page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        page.wait_for_timeout(6000)
-        context.close()
+            response = response_info.value
+            data = response.json()
+            items = data.get('items', [])
+            logger.info('API captured %d raw items for "%s"', len(items), keyword)
+            return items if isinstance(items, list) else []
+
+        except Exception as exc:
+            logger.warning('API wait failed for "%s": %s', keyword, exc)
+            return []
+        finally:
+            context.close()
 
     except Exception as exc:
         logger.warning('Chrome fetch error for "%s": %s', keyword, exc)
         with _browser_lock:
             _sync_browser = None
-
-    return captured
+        return []
 
 
 async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 2) -> list[Listing]:
     """Fetch listings from Mercari Japan. Runs Chrome in a thread executor."""
+    loop = asyncio.get_event_loop()
     for attempt in range(max_retries):
         try:
-            captured = await asyncio.to_thread(_fetch_sync, keyword)
+            captured = await loop.run_in_executor(None, _fetch_sync, keyword)
             if not captured:
                 logger.warning('No items captured for "%s" (attempt %d)', keyword, attempt + 1)
                 if attempt < max_retries - 1:
