@@ -84,8 +84,22 @@ def _map_condition(raw: str) -> str:
     return raw or 'Non spécifié'
 
 
-def _parse_posted_ago(timestamp: Optional[int]) -> str:
+CONDITION_ID_MAP = {
+    '1': 'Neuf',
+    '2': 'Très bon état',
+    '3': 'Très bon état',
+    '4': 'Bon état',
+    '5': 'État correct',
+    '6': 'Mauvais état',
+}
+
+
+def _parse_posted_ago(timestamp) -> str:
     if not timestamp:
+        return 'Inconnu'
+    try:
+        timestamp = int(timestamp)
+    except (ValueError, TypeError):
         return 'Inconnu'
     elapsed = int(time.time()) - timestamp
     if elapsed < 60:
@@ -103,8 +117,6 @@ def _parse_posted_ago(timestamp: Optional[int]) -> str:
 def _parse_listings(items: list[dict], query: str) -> list[Listing]:
     if not items:
         return []
-    import json as _json
-    logger.info('STRUCTURE ITEM[0]: %s', _json.dumps(items[0], ensure_ascii=False)[:800])
     listings: list[Listing] = []
     for item in items:
         try:
@@ -112,27 +124,31 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
             if not item_id:
                 continue
             title = str(item.get('name', '') or item.get('title', '')).strip()
-            price_jpy = item.get('price', 0)
-            if not isinstance(price_jpy, int):
-                try:
-                    price_jpy = int(price_jpy)
-                except (ValueError, TypeError):
-                    continue
+            price_raw = item.get('price', 0)
+            try:
+                price_jpy = int(price_raw)
+            except (ValueError, TypeError):
+                continue
             if not price_jpy:
                 continue
             image_url = str(
                 item.get('thumbnails', [None])[0]
                 if item.get('thumbnails')
-                else item.get('image_url') or item.get('photo') or ''
+                else (item.get('photos') or [{}])[0].get('uri', '') or item.get('image_url') or ''
             ).strip()
-            condition_raw = str(
-                item.get('item_condition', {}).get('name', '')
-                if isinstance(item.get('item_condition'), dict)
-                else item.get('item_condition') or item.get('condition') or ''
-            ).strip()
-            condition_fr = _map_condition(condition_raw)
+            condition_id = str(item.get('itemConditionId', '') or '')
+            if condition_id in CONDITION_ID_MAP:
+                condition_raw = ''
+                condition_fr = CONDITION_ID_MAP[condition_id]
+            else:
+                condition_raw = str(
+                    item.get('item_condition', {}).get('name', '')
+                    if isinstance(item.get('item_condition'), dict)
+                    else item.get('item_condition') or item.get('condition') or ''
+                ).strip()
+                condition_fr = _map_condition(condition_raw)
             item_status_raw = str(item.get('status', '') or item.get('item_status', '')).lower()
-            status = 'sold' if ('sold' in item_status_raw or '売り切れ' in item_status_raw) else 'available'
+            status = 'sold' if ('sold_out' in item_status_raw or '売り切れ' in item_status_raw or item_status_raw == 'item_status_sold_out') else 'available'
             created = item.get('created') or item.get('created_time') or item.get('updated')
             posted_ago = _parse_posted_ago(created)
             mercari_url = MERCARI_ITEM_URL.format(item_id=item_id)
