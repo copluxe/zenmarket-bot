@@ -171,7 +171,7 @@ class ZenMarketBot(discord.Client):
         for ch_name in all_targets:
             ch = self.channel_map.get(ch_name)
             if not ch:
-                logger.debug('Channel not found in map: #%s', ch_name)
+                logger.warning('Channel not found in map: #%s', ch_name)
                 continue
             try:
                 await ch.send(embed=embed, view=view)
