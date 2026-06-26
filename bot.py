@@ -132,16 +132,25 @@ class ZenMarketBot(discord.Client):
     ):
         keyword = brand_info['keyword']
         listings = await fetch_listings(keyword, source)
+        logger.info('[%s] %d listings fetched', brand_key, len(listings))
 
+        posted = 0
         for listing in listings:
             # Price filter
             if config.MAX_PRICE_YEN and listing.price_jpy > config.MAX_PRICE_YEN:
+                logger.info('[%s] PRIX FILTRE ¥%d > ¥%d — %s', brand_key, listing.price_jpy, config.MAX_PRICE_YEN, listing.id)
                 continue
             # Dedup
             if database.is_seen(listing.id):
+                logger.debug('[%s] deja vu: %s', brand_key, listing.id)
                 continue
             database.mark_seen(listing.id, brand_key, source)
+            logger.info('[%s] NOUVEAU: %s ¥%d — "%s"', brand_key, listing.id, listing.price_jpy, listing.title[:50])
             await self._post_listing(listing, brand_key, brand_info)
+            posted += 1
+
+        if posted == 0 and listings:
+            logger.info('[%s] Aucune nouvelle annonce (toutes deja vues)', brand_key)
 
     async def _post_listing(
         self, listing: Listing, brand_key: str, brand_info: dict
@@ -162,6 +171,7 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
+        logger.info('Envoi vers salons: %s', all_targets)
 
         # If price is reduced, also send to #meilleures-affaires
         if listing.original_price_jpy:
