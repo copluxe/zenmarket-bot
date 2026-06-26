@@ -103,6 +103,8 @@ def _parse_posted_ago(timestamp: Optional[int]) -> str:
 def _parse_listings(items: list[dict], query: str) -> list[Listing]:
     if not items:
         return []
+    import json as _json
+    logger.info('STRUCTURE ITEM[0]: %s', _json.dumps(items[0], ensure_ascii=False)[:800])
     listings: list[Listing] = []
     for item in items:
         try:
