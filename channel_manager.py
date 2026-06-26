@@ -127,7 +127,7 @@ Ce bot surveille **Mercari Japan** directement et publie les nouvelles annonces 
 - **#favoris** — Vos articles sauvegardés
 
 ## 💡 Utilisation
-Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épingler l'annonce dans #favoris avec votre tag.
+Chaque annonce affiche un bouton **🧡 Sauvegarder**. Cliquez dessus pour épingler l'annonce dans #favoris avec votre tag.
 
 ## ⚙️ Configuration
 - Intervalle de vérification : toutes les 90 secondes par marque
@@ -137,47 +137,9 @@ Chaque annonce affiche un bouton **🤍 Sauvegarder**. Cliquez dessus pour épin
 
 
 async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
-    """Create all categories and channels if they don't exist. Returns channel map."""
-    existing_categories = {cat.name: cat for cat in guild.categories}
-    existing_channels = {ch.name: ch for ch in guild.text_channels}
-    channel_map: dict[str, discord.TextChannel] = dict(existing_channels)
-
-    for category_name, channel_names in SERVER_STRUCTURE:
-        # Get or create category
-        if category_name not in existing_categories:
-            logger.info('Creating category: %s', category_name)
-            try:
-                category = await guild.create_category(category_name)
-                existing_categories[category_name] = category
-            except discord.Forbidden:
-                logger.error('No permission to create category: %s', category_name)
-                continue
-        else:
-            category = existing_categories[category_name]
-
-        # Get or create channels within the category
-        for ch_name in channel_names:
-            if ch_name not in existing_channels:
-                logger.info('Creating channel: #%s', ch_name)
-                try:
-                    ch = await guild.create_text_channel(ch_name, category=category)
-                    channel_map[ch_name] = ch
-                    existing_channels[ch_name] = ch
-                except discord.Forbidden:
-                    logger.error('No permission to create channel: #%s', ch_name)
-                except discord.HTTPException as exc:
-                    logger.error('Failed to create channel #%s: %s', ch_name, exc)
-            else:
-                channel_map[ch_name] = existing_channels[ch_name]
-
-    # Post help message in #comment-utiliser-le-bot if it's empty
-    help_ch: Optional[discord.TextChannel] = channel_map.get('comment-utiliser-le-bot')
-    if help_ch:
-        try:
-            history = [m async for m in help_ch.history(limit=1)]
-            if not history:
-                await help_ch.send(HELP_TEXT)
-        except discord.Forbidden:
-            pass
-
+    """Build channel map from existing channels only. Never creates new channels."""
+    channel_map: dict[str, discord.TextChannel] = {
+        ch.name: ch for ch in guild.text_channels
+    }
+    logger.info('Channel map built from existing channels: %d channels', len(channel_map))
     return channel_map
