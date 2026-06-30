@@ -174,93 +174,93 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
 
 
 # ---------------------------------------------------------------------------
-# Synchronous Playwright fetch (runs in thread executor)
+# Synchronous Playwright fetch — thread-local browser per brand (thread-safe)
 # ---------------------------------------------------------------------------
 
-_browser_lock = threading.Lock()
-_sync_pw = None
-_sync_browser = None
+_thread_local = threading.local()
 
 
 def _get_browser():
-    global _sync_pw, _sync_browser
+    """Get or create a Chrome browser for the current thread (one per brand group worker)."""
     from playwright.sync_api import sync_playwright
-    with _browser_lock:
-        if _sync_browser is not None:
-            try:
-                if _sync_browser.is_connected():
-                    return _sync_browser
-            except Exception:
-                pass
-        if _sync_pw is None:
-            _sync_pw = sync_playwright().start()
-        _sync_browser = _sync_pw.chromium.launch(
-            headless=True,
-            channel='chrome',
-            args=['--no-sandbox', '--disable-dev-shm-usage',
-                  '--disable-setuid-sandbox', '--disable-gpu'],
-        )
-        logger.info('Chrome browser started')
-        return _sync_browser
-
-
-def _fetch_sync(keyword: str) -> list[dict]:
-    """Fetch Mercari search results synchronously via Chrome. Runs in a thread."""
-    global _sync_browser
-    encoded = quote(keyword)
-    url = (
-        f'https://jp.mercari.com/search?keyword={encoded}'
-        '&status=on_sale&sort=created_time&order=desc'
+    browser = getattr(_thread_local, 'browser', None)
+    if browser is not None:
+        try:
+            if browser.is_connected():
+                return browser
+        except Exception:
+            pass
+    pw = getattr(_thread_local, 'pw', None)
+    if pw is None:
+        _thread_local.pw = sync_playwright().start()
+    _thread_local.browser = _thread_local.pw.chromium.launch(
+        headless=True,
+        channel='chrome',
+        args=['--no-sandbox', '--disable-dev-shm-usage',
+              '--disable-setuid-sandbox', '--disable-gpu'],
     )
+    logger.info('Chrome browser started (thread %s)', threading.current_thread().name)
+    return _thread_local.browser
 
+
+def _fetch_brand_sync(keywords: list) -> list[dict]:
+    """Fetch all keywords for one brand using a single Chrome context. Thread-safe."""
+    all_items: list[dict] = []
     try:
         browser = _get_browser()
         context = browser.new_context(locale='ja-JP')
-        page = context.new_page()
-
         try:
-            # Wait explicitly for the Mercari search API response
-            with page.expect_response(
-                lambda r: 'entities:search' in r.url,
-                timeout=20000,
-            ) as response_info:
-                page.goto(url, wait_until='commit', timeout=30000)
-
-            response = response_info.value
-            data = response.json()
-            items = data.get('items', [])
-            logger.info('API captured %d raw items for "%s"', len(items), keyword)
-            return items if isinstance(items, list) else []
-
-        except Exception as exc:
-            logger.warning('API wait failed for "%s": %s', keyword, exc)
-            return []
+            for i, keyword in enumerate(keywords):
+                encoded = quote(keyword)
+                url = (
+                    f'https://jp.mercari.com/search?keyword={encoded}'
+                    '&status=on_sale&sort=created_time&order=desc'
+                )
+                page = context.new_page()
+                try:
+                    with page.expect_response(
+                        lambda r: 'entities:search' in r.url,
+                        timeout=20000,
+                    ) as response_info:
+                        page.goto(url, wait_until='commit', timeout=30000)
+                    data = response_info.value.json()
+                    items = data.get('items', [])
+                    logger.info('API captured %d raw items for "%s"', len(items), keyword)
+                    all_items.extend(items if isinstance(items, list) else [])
+                except Exception as exc:
+                    logger.warning('API wait failed for "%s": %s', keyword, exc)
+                finally:
+                    page.close()
+                if i < len(keywords) - 1:
+                    time.sleep(1)  # 1s between keywords (was 2s)
         finally:
             context.close()
-
     except Exception as exc:
-        logger.warning('Chrome fetch error for "%s": %s', keyword, exc)
-        with _browser_lock:
-            _sync_browser = None
-        return []
+        logger.warning('Chrome fetch error: %s', exc)
+        _thread_local.browser = None
+    return all_items
 
 
-async def fetch_listings(keyword: str, source: str = 'mercari', max_retries: int = 2) -> list[Listing]:
-    """Fetch listings from Mercari Japan. Runs Chrome in a thread executor."""
+async def fetch_brand_listings(keywords: list, source: str = 'mercari', max_retries: int = 2) -> list[Listing]:
+    """Fetch and deduplicate listings for all keywords of one brand."""
     loop = asyncio.get_event_loop()
     for attempt in range(max_retries):
         try:
-            captured = await loop.run_in_executor(None, _fetch_sync, keyword)
-            if not captured:
-                logger.warning('No items captured for "%s" (attempt %d)', keyword, attempt + 1)
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(3)
-                    continue
-            listings = _parse_listings(captured, keyword)
-            logger.info('Fetched %d listings for "%s" via Mercari', len(listings), keyword)
+            captured = await loop.run_in_executor(None, _fetch_brand_sync, keywords)
+            if not captured and attempt < max_retries - 1:
+                logger.warning('No items captured (attempt %d)', attempt + 1)
+                await asyncio.sleep(3)
+                continue
+            seen: set[str] = set()
+            listings: list[Listing] = []
+            for listing in _parse_listings(captured, str(keywords)):
+                if listing.id not in seen:
+                    seen.add(listing.id)
+                    listings.append(listing)
+            logger.info('Fetched %d listings for %d keywords via Mercari', len(listings), len(keywords))
             return listings
         except Exception as exc:
-            logger.warning('fetch_listings error for "%s": %s', keyword, exc)
+            logger.warning('fetch_brand_listings error: %s', exc)
             if attempt < max_retries - 1:
                 await asyncio.sleep(3)
     return []

@@ -18,7 +18,7 @@ import database
 from channel_manager import setup_guild
 from embeds import ListingView, build_listing_embed
 from router import BRANDS, get_channels
-from scraper import Listing, fetch_listings
+from scraper import Listing, fetch_brand_listings
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -111,8 +111,13 @@ class ZenMarketBot(discord.Client):
     async def scrape_loop(self):
         if not self.guild:
             return
-        for brand_key, brand_info in BRANDS.items():
-            await self._process_brand_source(brand_key, brand_info, 'mercari')
+        brand_items = list(BRANDS.items())
+        for i in range(0, len(brand_items), 3):
+            group = brand_items[i:i + 3]
+            await asyncio.gather(*[
+                self._process_brand_source(brand_key, brand_info, 'mercari')
+                for brand_key, brand_info in group
+            ])
             await asyncio.sleep(2)
 
     @scrape_loop.before_loop
@@ -131,17 +136,7 @@ class ZenMarketBot(discord.Client):
         self, brand_key: str, brand_info: dict, source: str
     ):
         keywords = brand_info.get('keywords', [brand_info.get('keyword', '')])
-
-        seen_ids: set[str] = set()
-        all_listings: list[Listing] = []
-        for kw in keywords:
-            kw_listings = await fetch_listings(kw, source)
-            for listing in kw_listings:
-                if listing.id not in seen_ids:
-                    seen_ids.add(listing.id)
-                    all_listings.append(listing)
-            await asyncio.sleep(2)
-
+        all_listings = await fetch_brand_listings(keywords, source)
         logger.info('[%s] %d listings total (%d mots-clés)', brand_key, len(all_listings), len(keywords))
 
         posted = 0
