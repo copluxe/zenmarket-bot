@@ -8,6 +8,8 @@ from typing import List
 # Shared category detection keywords and their channel suffix.
 # Channel name = {brand_prefix}-{suffix}
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    'sacs':         ['バッグ', '鞄', 'かばん'],
+    'sacs-a-main':  ['ハンドバッグ'],
     'pochettes':    ['pochette', 'ポシェット', 'ポーチ'],
     'cabas':        ['cabas', 'カバ', 'トート'],
     'sacoches':     ['sacoche', 'サコッシュ', 'ショルダー'],
@@ -27,6 +29,10 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
         'ellipse':       {'channel': 'lv-ellipse',        'kw': ['ellipse', 'エリプス']},
         'saint_cloud':   {'channel': 'lv-saint-cloud',    'kw': ['saint-cloud', 'saint cloud', 'サンクルー']},
         'noe':           {'channel': 'lv-noe',            'kw': ['noé', 'noe', 'ノエ']},
+        'papillon':      {'channel': 'lv-papillon',       'kw': ['papillon', 'パピヨン']},
+        'boston':        {'channel': 'lv-boston',         'kw': ['boston', 'ボストン']},
+        'saumur':        {'channel': 'lv-saumur',         'kw': ['saumur', 'ソミュール']},
+        'trouville':     {'channel': 'lv-trouville',      'kw': ['trouville', 'トルーヴィル', 'トルービル']},
     },
     'gucci': {
         'soho':       {'channel': 'gucci-soho',       'kw': ['soho', 'ソーホー']},
