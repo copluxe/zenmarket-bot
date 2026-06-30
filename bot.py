@@ -130,12 +130,22 @@ class ZenMarketBot(discord.Client):
     async def _process_brand_source(
         self, brand_key: str, brand_info: dict, source: str
     ):
-        keyword = brand_info['keyword']
-        listings = await fetch_listings(keyword, source)
-        logger.info('[%s] %d listings fetched', brand_key, len(listings))
+        keywords = brand_info.get('keywords', [brand_info.get('keyword', '')])
+
+        seen_ids: set[str] = set()
+        all_listings: list[Listing] = []
+        for kw in keywords:
+            kw_listings = await fetch_listings(kw, source)
+            for listing in kw_listings:
+                if listing.id not in seen_ids:
+                    seen_ids.add(listing.id)
+                    all_listings.append(listing)
+            await asyncio.sleep(2)
+
+        logger.info('[%s] %d listings total (%d mots-clés)', brand_key, len(all_listings), len(keywords))
 
         posted = 0
-        for listing in listings:
+        for listing in all_listings:
             # Price filter
             if config.MAX_PRICE_YEN and listing.price_jpy > config.MAX_PRICE_YEN:
                 logger.info('[%s] PRIX FILTRE ¥%d > ¥%d — %s', brand_key, listing.price_jpy, config.MAX_PRICE_YEN, listing.id)
@@ -149,7 +159,7 @@ class ZenMarketBot(discord.Client):
             await self._post_listing(listing, brand_key, brand_info)
             posted += 1
 
-        if posted == 0 and listings:
+        if posted == 0 and all_listings:
             logger.info('[%s] Aucune nouvelle annonce (toutes deja vues)', brand_key)
 
     async def _post_listing(
