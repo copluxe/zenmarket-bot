@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import quote
@@ -174,9 +175,12 @@ def _parse_listings(items: list[dict], query: str) -> list[Listing]:
 
 
 # ---------------------------------------------------------------------------
-# Synchronous Playwright fetch — thread-local browser per brand (thread-safe)
+# Synchronous Playwright fetch — dedicated thread pool, one browser per thread
 # ---------------------------------------------------------------------------
 
+# Dedicated pool of 3 workers — threads are never recycled between calls,
+# so each thread keeps its own greenlet context and browser instance.
+_SCRAPER_EXECUTOR = ThreadPoolExecutor(max_workers=3, thread_name_prefix='scraper')
 _thread_local = threading.local()
 
 
@@ -205,6 +209,15 @@ def _get_browser():
 
 def _fetch_brand_sync(keywords: list) -> list[dict]:
     """Fetch all keywords for one brand using a single Chrome context. Thread-safe."""
+    # Give this thread its own isolated event loop so Playwright's internal
+    # greenlets never cross into the main asyncio loop or other threads.
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            asyncio.set_event_loop(asyncio.new_event_loop())
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     all_items: list[dict] = []
     try:
         browser = _get_browser()
@@ -230,11 +243,17 @@ def _fetch_brand_sync(keywords: list) -> list[dict]:
                 except Exception as exc:
                     logger.warning('API wait failed for "%s": %s', keyword, exc)
                 finally:
-                    page.close()
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
                 if i < len(keywords) - 1:
-                    time.sleep(1)  # 1s between keywords (was 2s)
+                    time.sleep(1)
         finally:
-            context.close()
+            try:
+                context.close()
+            except Exception:
+                pass
     except Exception as exc:
         logger.warning('Chrome fetch error: %s', exc)
         _thread_local.browser = None
@@ -246,7 +265,7 @@ async def fetch_brand_listings(keywords: list, source: str = 'mercari', max_retr
     loop = asyncio.get_event_loop()
     for attempt in range(max_retries):
         try:
-            captured = await loop.run_in_executor(None, _fetch_brand_sync, keywords)
+            captured = await loop.run_in_executor(_SCRAPER_EXECUTOR, _fetch_brand_sync, keywords)
             if not captured and attempt < max_retries - 1:
                 logger.warning('No items captured (attempt %d)', attempt + 1)
                 await asyncio.sleep(3)
