@@ -111,14 +111,9 @@ class ZenMarketBot(discord.Client):
     async def scrape_loop(self):
         if not self.guild:
             return
-        brand_items = list(BRANDS.items())
-        for i in range(0, len(brand_items), 3):
-            group = brand_items[i:i + 3]
-            await asyncio.gather(*[
-                self._process_brand_source(brand_key, brand_info, 'mercari')
-                for brand_key, brand_info in group
-            ])
-            await asyncio.sleep(2)
+        for brand_key, brand_info in BRANDS.items():
+            await self._process_brand_source(brand_key, brand_info, 'mercari')
+            await asyncio.sleep(3)
 
     @scrape_loop.before_loop
     async def before_scrape(self):
