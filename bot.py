@@ -13,6 +13,8 @@ from typing import Optional
 import discord
 from discord.ext import tasks
 
+import time
+
 import config
 import database
 from channel_manager import setup_guild
@@ -67,6 +69,7 @@ class ZenMarketBot(discord.Client):
         # The custom_id prefix 'save_' matches SaveButton's custom_id pattern.
         # We add a generic fallback view that discord.py will route by custom_id.
         self.persistent_views_added = False
+        self._last_scrape_time: float = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -130,6 +133,7 @@ class ZenMarketBot(discord.Client):
     async def _process_brand_source(
         self, brand_key: str, brand_info: dict, source: str
     ):
+        self._last_scrape_time = time.time()
         keywords = brand_info.get('keywords', [brand_info.get('keyword', '')])
         all_listings = await fetch_brand_listings(keywords, source)
         logger.info('[%s] %d listings total (%d mots-clés)', brand_key, len(all_listings), len(keywords))
@@ -204,6 +208,10 @@ class ZenMarketBot(discord.Client):
         if not self.daily_stats_loop.is_running():
             logger.warning('Watchdog: daily_stats_loop stopped, restarting.')
             self.daily_stats_loop.restart()
+        # If no scraping in 15 min despite loop running → force restart via systemd
+        if self._last_scrape_time and time.time() - self._last_scrape_time > 900:
+            logger.error('Watchdog: aucun scraping depuis 15 min — redemarrage force.')
+            sys.exit(1)
 
     @watchdog_loop.before_loop
     async def before_watchdog(self):
