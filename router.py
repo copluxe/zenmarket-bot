@@ -117,12 +117,12 @@ BRANDS: dict[str, dict] = {
         'prefix':  'miumiu',
         'all_channel': 'miumiu-toutes-annonces',
     },
-    'balenciaga': {
-        'name_fr': 'Balenciaga',
-        'name_jp': 'バレンシアガ',
-        'keywords': ['バレンシアガ', 'BALENCIAGA'],
-        'prefix':  'balenciaga',
-        'all_channel': 'balenciaga-toutes-annonces',
+    'burberry': {
+        'name_fr': 'Burberry',
+        'name_jp': 'バーバリー',
+        'keywords': ['バーバリー', 'BURBERRY', 'バーバリ'],
+        'prefix':  'burberry',
+        'all_channel': 'burberry-toutes-annonces',
     },
     'loewe': {
         'name_fr': 'Loewe',
