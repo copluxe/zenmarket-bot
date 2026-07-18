@@ -74,11 +74,11 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
         'miumiu-pochettes', 'miumiu-cabas', 'miumiu-sacoches', 'miumiu-etuis',
         'miumiu-portefeuilles', 'miumiu-ceintures',
     ]),
-    ('BALENCIAGA', [
-        'balenciaga-toutes-annonces',
-        'balenciaga-sacs', 'balenciaga-sacs-a-main',
-        'balenciaga-pochettes', 'balenciaga-cabas', 'balenciaga-sacoches', 'balenciaga-etuis',
-        'balenciaga-portefeuilles', 'balenciaga-ceintures',
+    ('BURBERRY', [
+        'burberry-toutes-annonces',
+        'burberry-sacs', 'burberry-sacs-a-main',
+        'burberry-pochettes', 'burberry-cabas', 'burberry-sacoches', 'burberry-etuis',
+        'burberry-portefeuilles', 'burberry-ceintures',
     ]),
     ('LOEWE', [
         'loewe-toutes-annonces',
@@ -137,9 +137,22 @@ Chaque annonce affiche un bouton **🧡 Sauvegarder**. Cliquez dessus pour épin
 
 
 async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
-    """Build channel map from existing channels only. Never creates new channels."""
+    """Ensure all channels in SERVER_STRUCTURE exist, creating any that are missing."""
     channel_map: dict[str, discord.TextChannel] = {
         ch.name: ch for ch in guild.text_channels
     }
-    logger.info('Channel map built from existing channels: %d channels', len(channel_map))
+
+    for category_name, channel_names in SERVER_STRUCTURE:
+        category = discord.utils.get(guild.categories, name=category_name)
+        if not category:
+            category = await guild.create_category(category_name)
+            logger.info('Created category: %s', category_name)
+
+        for ch_name in channel_names:
+            if ch_name not in channel_map:
+                ch = await guild.create_text_channel(ch_name, category=category)
+                channel_map[ch_name] = ch
+                logger.info('Created channel: #%s', ch_name)
+
+    logger.info('Channel map built: %d channels', len(channel_map))
     return channel_map
