@@ -39,7 +39,7 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ]),
     ('DIOR', [
         'dior-toutes-annonces',
-        'dior-trotter', 'dior-bowling', 'dior-boston', 'dior-lady-dior',
+        'dior-trotter', 'dior-bowling', 'dior-boston', 'dior-lady-dior', 'dior-saddle',
         'dior-pochettes', 'dior-cabas', 'dior-sacoches', 'dior-etuis',
         'dior-portefeuilles', 'dior-ceintures',
     ]),

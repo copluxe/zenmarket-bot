@@ -46,6 +46,7 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
         'bowling':    {'channel': 'dior-bowling',    'kw': ['bowling', 'ボーリング', 'ボウリング']},
         'boston':     {'channel': 'dior-boston',     'kw': ['boston', 'ボストン']},
         'lady_dior':  {'channel': 'dior-lady-dior',  'kw': ['lady dior', 'レディディオール', 'レディ ディオール', 'レディ・ディオール', 'lady christian dior']},
+        'saddle':     {'channel': 'dior-saddle',     'kw': ['saddle', 'サドル']},
     },
     'coach': {
         'tabby': {'channel': 'coach-tabby', 'kw': ['tabby', 'タビー']},
