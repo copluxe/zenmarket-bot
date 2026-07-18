@@ -56,8 +56,8 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
         'boston': {'channel': 'celine-boston', 'kw': ['boston', 'ボストン']},
     },
     'miumiu': {
-        'caprice':    {'channel': 'miumiu-caprice',    'kw': ['caprice', 'カプリス', 'キャプリス']},
-        'matelasse':  {'channel': 'miumiu-matelasse',  'kw': ['matelassé', 'matelasse', 'マテラッセ', 'マトラッセ']},
+        'caprice':   {'channel': 'caprice',    'kw': ['caprice', 'カプリス', 'キャプリス']},
+        'matelasse': {'channel': 'matelassé',  'kw': ['matelassé', 'matelasse', 'マテラッセ', 'マトラッセ']},
     },
     'hermes': {
         'foulards': {'channel': 'hermes-foulards', 'kw': ['カレ', 'カレ90', 'スカーフ', 'バンダナ', 'foulard', 'carré', 'carre', 'bandana', 'ツイリー', 'twilly']},

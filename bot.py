@@ -175,12 +175,32 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
-        logger.info('Envoi vers salons: %s', all_targets)
 
         # If price is reduced, also send to #meilleures-affaires
         if listing.original_price_jpy:
             if 'meilleures-affaires' not in all_targets:
                 all_targets.append('meilleures-affaires')
+
+        # Cross-brand category channels
+        _CATEGORY_GLOBAL = {
+            'sacs': 'sacs-toutes-les-marques',
+            'sacs-a-main': 'sacs-à-main',
+            'boston': 'boston',
+            'cabas': 'cabas',
+            'sacoches': 'sacoches',
+            'pochettes': 'pochettes',
+            'portefeuilles': 'portefeuilles',
+            'etuis': 'étuis',
+        }
+        prefix = brand_info['prefix']
+        for ch in channels_names:
+            if ch.startswith(prefix + '-'):
+                suffix = ch[len(prefix) + 1:]
+                global_ch = _CATEGORY_GLOBAL.get(suffix)
+                if global_ch and global_ch not in all_targets:
+                    all_targets.append(global_ch)
+
+        logger.info('Envoi vers salons: %s', all_targets)
 
         for ch_name in all_targets:
             ch = self.channel_map.get(ch_name)
