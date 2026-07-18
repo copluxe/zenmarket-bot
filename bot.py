@@ -66,10 +66,10 @@ CHANNEL_PRICE_FILTERS: dict[str, tuple[int, int]] = {
     'lv-boston':        (100, 500),
     'lv-trouville':     (100, 500),
     'lv-portefeuilles': (0,    90),
-    'lv-ceintures':     (0,   150),
+    'lv-ceintures':     (0,   300),
     'lv-etuis':         (0,    70),
-    'lv-sacoches':      (0,   350),
-    'lv-pochettes':     (0,   250),
+    'lv-sacoches':      (0,   300),
+    'lv-pochettes':     (0,   300),
     'lv-cabas':         (0,   500),
 }
 
