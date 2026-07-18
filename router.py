@@ -16,6 +16,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     'etuis':        ['étui', 'etui', 'ケース', '小物'],
     'portefeuilles': ['portefeuille', '財布', 'ポルトフォイユ', 'ウォレット'],
     'ceintures':    ['ceinture', 'ベルト'],
+    'boston':       ['ボストンバッグ', 'ボストン'],
 }
 
 # Per-brand model detection. Keys are brand identifiers matching BRANDS below.
@@ -53,6 +54,10 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
     },
     'celine': {
         'boston': {'channel': 'celine-boston', 'kw': ['boston', 'ボストン']},
+    },
+    'miumiu': {
+        'caprice':    {'channel': 'miumiu-caprice',    'kw': ['caprice', 'カプリス', 'キャプリス']},
+        'matelasse':  {'channel': 'miumiu-matelasse',  'kw': ['matelassé', 'matelasse', 'マテラッセ', 'マトラッセ']},
     },
     'hermes': {
         'foulards': {'channel': 'hermes-foulards', 'kw': ['カレ', 'カレ90', 'スカーフ', 'バンダナ', 'foulard', 'carré', 'carre', 'bandana', 'ツイリー', 'twilly']},
