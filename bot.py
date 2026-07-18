@@ -52,6 +52,28 @@ JST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------------------
+# Price filters per channel (min_eur, max_eur). No entry = no filter.
+# ---------------------------------------------------------------------------
+
+CHANNEL_PRICE_FILTERS: dict[str, tuple[int, int]] = {
+    'lv-neverfull':     (100, 500),
+    'lv-keepall':       (100, 500),
+    'lv-speedy':        (100, 500),
+    'lv-alma':          (100, 500),
+    'lv-saint-cloud':   (0,   300),
+    'lv-noe':           (100, 500),
+    'lv-papillon':      (100, 500),
+    'lv-boston':        (100, 500),
+    'lv-trouville':     (100, 500),
+    'lv-portefeuilles': (0,    90),
+    'lv-ceintures':     (0,   150),
+    'lv-etuis':         (0,    70),
+    'lv-sacoches':      (0,   350),
+    'lv-pochettes':     (0,   250),
+    'lv-cabas':         (0,   600),
+}
+
+# ---------------------------------------------------------------------------
 # Bot
 # ---------------------------------------------------------------------------
 
@@ -203,6 +225,14 @@ class ZenMarketBot(discord.Client):
         logger.info('Envoi vers salons: %s', all_targets)
 
         for ch_name in all_targets:
+            # Price filter per channel (in EUR)
+            _price_filter = CHANNEL_PRICE_FILTERS.get(ch_name)
+            if _price_filter:
+                _min, _max = _price_filter
+                if not (_min <= listing.price_eur <= _max):
+                    logger.debug('Prix filtré pour #%s: €%d hors [€%d-€%d]', ch_name, listing.price_eur, _min, _max)
+                    continue
+
             ch = self.channel_map.get(ch_name)
             if not ch:
                 logger.warning('Channel not found in map: #%s', ch_name)
