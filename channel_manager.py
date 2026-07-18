@@ -137,22 +137,9 @@ Chaque annonce affiche un bouton **🧡 Sauvegarder**. Cliquez dessus pour épin
 
 
 async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
-    """Ensure all channels in SERVER_STRUCTURE exist, creating any that are missing."""
+    """Build channel map from existing channels only. Never creates new channels."""
     channel_map: dict[str, discord.TextChannel] = {
         ch.name: ch for ch in guild.text_channels
     }
-
-    for category_name, channel_names in SERVER_STRUCTURE:
-        category = discord.utils.get(guild.categories, name=category_name)
-        if not category:
-            category = await guild.create_category(category_name)
-            logger.info('Created category: %s', category_name)
-
-        for ch_name in channel_names:
-            if ch_name not in channel_map:
-                ch = await guild.create_text_channel(ch_name, category=category)
-                channel_map[ch_name] = ch
-                logger.info('Created channel: #%s', ch_name)
-
-    logger.info('Channel map built: %d channels', len(channel_map))
+    logger.info('Channel map built from existing channels: %d channels', len(channel_map))
     return channel_map
