@@ -168,11 +168,10 @@ class ZenMarketBot(discord.Client):
             if config.MAX_PRICE_YEN and listing.price_jpy > config.MAX_PRICE_YEN:
                 logger.info('[%s] PRIX FILTRE ¥%d > ¥%d — %s', brand_key, listing.price_jpy, config.MAX_PRICE_YEN, listing.id)
                 continue
-            # Dedup
-            if database.is_seen(listing.id):
+            # Dedup atomique — évite les doublons en cas de concurrence
+            if not database.mark_seen_atomic(listing.id, brand_key, source):
                 logger.debug('[%s] deja vu: %s', brand_key, listing.id)
                 continue
-            database.mark_seen(listing.id, brand_key, source)
             logger.info('[%s] NOUVEAU: %s ¥%d — "%s"', brand_key, listing.id, listing.price_jpy, listing.title[:50])
             await self._post_listing(listing, brand_key, brand_info)
             posted += 1
