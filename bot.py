@@ -198,8 +198,8 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
-        if 'sacs-toutes-les-marques' not in all_targets:
-            all_targets.append('sacs-toutes-les-marques')
+        if 'sacs' not in all_targets:
+            all_targets.append('sacs')
 
         # If price is reduced, also send to #meilleures-affaires
         if listing.original_price_jpy:
@@ -208,7 +208,7 @@ class ZenMarketBot(discord.Client):
 
         # Cross-brand category channels (no price filter — toutes marques confondues)
         _CATEGORY_GLOBAL = {
-            'sacs': 'sacs-toutes-les-marques',
+            'sacs': 'sacs',
             'sacs-a-main': 'sacs-à-main',
             'boston': 'boston',
             'cabas': 'cabas',
