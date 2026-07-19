@@ -8,15 +8,15 @@ from typing import List
 # Shared category detection keywords and their channel suffix.
 # Channel name = {brand_prefix}-{suffix}
 CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    'sacs':         ['バッグ', '鞄', 'かばん'],
-    'sacs-a-main':  ['ハンドバッグ'],
-    'pochettes':    ['pochette', 'ポシェット', 'ポーチ'],
-    'cabas':        ['cabas', 'カバ', 'トート'],
-    'sacoches':     ['sacoche', 'サコッシュ', 'ショルダー'],
+    'sacs':         ['バッグ', '鞄', 'かばん', 'バック', 'sac', 'bag'],
+    'sacs-a-main':  ['ハンドバッグ', 'ハンドバック', 'sac à main', 'sac a main'],
+    'pochettes':    ['pochette', 'ポシェット', 'ポーチ', 'クラッチ', 'clutch'],
+    'cabas':        ['cabas', 'カバ', 'トート', 'tote'],
+    'sacoches':     ['sacoche', 'サコッシュ', 'ショルダー', 'shoulder'],
     'etuis':        ['étui', 'etui', 'ケース', '小物'],
     'portefeuilles': ['portefeuille', '財布', 'ポルトフォイユ', 'ウォレット'],
     'ceintures':    ['ceinture', 'ベルト'],
-    'boston':       ['ボストンバッグ', 'ボストン'],
+    'boston':       ['ボストンバッグ', 'ボストン', 'boston'],
 }
 
 # Per-brand model detection. Keys are brand identifiers matching BRANDS below.
