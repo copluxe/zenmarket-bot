@@ -232,7 +232,7 @@ class ZenMarketBot(discord.Client):
             if _price_filter:
                 _min, _max = _price_filter
                 if not (_min <= listing.price_eur <= _max):
-                    logger.debug('Prix filtré pour #%s: €%d hors [€%d-€%d]', ch_name, listing.price_eur, _min, _max)
+                    logger.info('Prix filtré pour #%s: €%d hors [€%d-€%d]', ch_name, listing.price_eur, _min, _max)
                     continue
 
             ch = self.channel_map.get(ch_name)
