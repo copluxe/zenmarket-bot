@@ -201,7 +201,7 @@ class ZenMarketBot(discord.Client):
         # Ajouter #sacs pour tout article qui n'est PAS exclusivement un accessoire
         _ACCESSORY_SUFFIXES = {'portefeuilles', 'etuis', 'ceintures', 'foulards'}
         _pfx = brand_info['prefix']
-        _brand_suffixes = {ch[len(_pfx) + 1:] for ch in channels_names if ch.startswith(_pfx + '-')}
+        _brand_suffixes = {ch[len(_pfx) + 1:] for ch in channels_names if ch.startswith(_pfx + '-')} - {'toutes-annonces'}
         _is_bag = bool(_brand_suffixes - _ACCESSORY_SUFFIXES)
         if _is_bag and 'sacs' not in all_targets:
             all_targets.append('sacs')
