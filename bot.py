@@ -198,13 +198,6 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
-        # #sacs reçoit tout sauf les accessoires purs (portefeuilles, étuis, ceintures, foulards)
-        _NON_BAG_SUFFIXES = {'portefeuilles', 'etuis', 'ceintures', 'foulards'}
-        _pfx = brand_info['prefix']
-        _brand_suffixes = {ch[len(_pfx) + 1:] for ch in channels_names if ch.startswith(_pfx + '-')}
-        _is_only_accessory = bool(_brand_suffixes) and _brand_suffixes.issubset(_NON_BAG_SUFFIXES)
-        if not _is_only_accessory and 'sacs' not in all_targets:
-            all_targets.append('sacs')
 
         # If price is reduced, also send to #meilleures-affaires
         if listing.original_price_jpy:
