@@ -194,10 +194,12 @@ class ZenMarketBot(discord.Client):
         )
         view = ListingView()
 
-        # Also send to #nouveautes-toutes-marques
+        # Also send to global channels unconditionally
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
+        if 'sacs-toutes-les-marques' not in all_targets:
+            all_targets.append('sacs-toutes-les-marques')
 
         # If price is reduced, also send to #meilleures-affaires
         if listing.original_price_jpy:
