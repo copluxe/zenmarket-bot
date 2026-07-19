@@ -56,23 +56,27 @@ JST = timezone(timedelta(hours=9))
 # ---------------------------------------------------------------------------
 
 CHANNEL_PRICE_FILTERS: dict[str, tuple[int, int]] = {
-    'lv-neverfull':     (100, 500),
-    'lv-keepall':       (100, 500),
-    'lv-speedy':        (100, 500),
-    'lv-alma':          (100, 500),
-    'lv-saint-cloud':   (40,  300),
-    'lv-noe':           (100, 500),
-    'lv-papillon':      (100, 500),
-    'lv-boston':        (100, 500),
-    'lv-trouville':     (100, 500),
-    'lv-portefeuilles': (0,    90),
-    'lv-ceintures':     (40,  300),
-    'lv-etuis':         (0,    70),
-    'lv-sacoches':      (40,  300),
-    'lv-pochettes':     (40,  300),
-    'lv-sacs':          (100, 500),
-    'lv-sacs-a-main':   (100, 500),
-    'lv-cabas':         (100, 500),
+    # Louis Vuitton — catch-all (anti-fake: nothing below €40)
+    'lv-toutes-annonces':    (40, 9999),
+    # Louis Vuitton — model/category channels
+    'lv-neverfull':          (100, 500),
+    'lv-keepall':            (100, 500),
+    'lv-speedy':             (100, 500),
+    'lv-alma':               (100, 500),
+    'lv-pochette-metis':     (100, 500),
+    'lv-saint-cloud':        (40,  300),
+    'lv-noe':                (100, 500),
+    'lv-papillon':           (100, 500),
+    'lv-boston':             (100, 500),
+    'lv-trouville':          (100, 500),
+    'lv-portefeuilles':      (0,    90),
+    'lv-ceintures':          (40,  300),
+    'lv-etuis':              (0,    70),
+    'lv-sacoches':           (40,  300),
+    'lv-pochettes':          (40,  300),
+    'lv-sacs':               (100, 500),
+    'lv-sacs-a-main':        (100, 500),
+    'lv-cabas':              (100, 500),
 }
 
 # ---------------------------------------------------------------------------
@@ -204,7 +208,7 @@ class ZenMarketBot(discord.Client):
             if 'meilleures-affaires' not in all_targets:
                 all_targets.append('meilleures-affaires')
 
-        # Cross-brand category channels
+        # Cross-brand category channels — inherit price filter from brand-specific channel
         _CATEGORY_GLOBAL = {
             'sacs': 'sacs-toutes-les-marques',
             'sacs-a-main': 'sacs-à-main',
@@ -216,18 +220,23 @@ class ZenMarketBot(discord.Client):
             'etuis': 'étuis',
         }
         prefix = brand_info['prefix']
+        _inherited_filters: dict[str, tuple[int, int]] = {}
         for ch in channels_names:
             if ch.startswith(prefix + '-'):
                 suffix = ch[len(prefix) + 1:]
                 global_ch = _CATEGORY_GLOBAL.get(suffix)
                 if global_ch and global_ch not in all_targets:
                     all_targets.append(global_ch)
+                    # Carry the brand-specific filter onto the cross-brand channel
+                    brand_filter = CHANNEL_PRICE_FILTERS.get(f'{prefix}-{suffix}')
+                    if brand_filter:
+                        _inherited_filters[global_ch] = brand_filter
 
-        logger.info('Envoi vers salons: %s', all_targets)
+        logger.info('[%s] ¥%d (€%d) → salons: %s', brand_key, listing.price_jpy, listing.price_eur, all_targets)
 
         for ch_name in all_targets:
-            # Price filter per channel (in EUR)
-            _price_filter = CHANNEL_PRICE_FILTERS.get(ch_name)
+            # Price filter per channel (in EUR) — also uses inherited filters for cross-brand channels
+            _price_filter = CHANNEL_PRICE_FILTERS.get(ch_name) or _inherited_filters.get(ch_name)
             if _price_filter:
                 _min, _max = _price_filter
                 if not (_min <= listing.price_eur <= _max):
