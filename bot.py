@@ -61,7 +61,7 @@ CHANNEL_PRICE_FILTERS: dict[str, tuple[int, int]] = {
     'lv-speedy':        (100, 500),
     'lv-alma':          (100, 500),
     'lv-saint-cloud':   (40,  300),
-    'lv-noe':           (100, 500),
+    'lv-noe-et-bucket': (100, 500),
     'lv-papillon':      (100, 500),
     'lv-boston':        (100, 500),
     'lv-trouville':     (100, 500),
@@ -198,7 +198,11 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
-        if 'sacs' not in all_targets:
+        # Ajouter #sacs pour tout article qui n'est PAS exclusivement un accessoire
+        _NON_BAG_SUFFIXES = {'portefeuilles', 'etuis', 'ceintures', 'foulards'}
+        _brand_suffixes = {ch[len(prefix) + 1:] for ch in channels_names if ch.startswith(prefix + '-')}
+        _is_only_accessory = bool(_brand_suffixes) and _brand_suffixes.issubset(_NON_BAG_SUFFIXES)
+        if not _is_only_accessory and 'sacs' not in all_targets:
             all_targets.append('sacs')
 
         # If price is reduced, also send to #meilleures-affaires
