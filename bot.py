@@ -149,7 +149,10 @@ class ZenMarketBot(discord.Client):
     @scrape_loop.error
     async def scrape_error(self, error: Exception):
         logger.error('scrape_loop crashed: %s', error, exc_info=error)
-        # Restart is handled exclusively by watchdog_loop to avoid concurrent loops.
+        await asyncio.sleep(10)
+        if not self.scrape_loop.is_running():
+            logger.warning('Restarting scrape_loop after crash.')
+            self.scrape_loop.restart()
 
     async def _process_brand_source(
         self, brand_key: str, brand_info: dict, source: str
@@ -248,7 +251,7 @@ class ZenMarketBot(discord.Client):
     # Watchdog — restarts loops if they die silently
     # ------------------------------------------------------------------
 
-    @tasks.loop(minutes=2)
+    @tasks.loop(minutes=5)
     async def watchdog_loop(self):
         if not self.scrape_loop.is_running():
             logger.warning('Watchdog: scrape_loop stopped, restarting.')
