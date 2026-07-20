@@ -29,7 +29,7 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
         'pochette_metis':{'channel': 'lv-pochette-metis', 'kw': ['pochette métis', 'pochette metis', 'ポシェットメティス', 'ポシェット・メティス', 'ポシェットメチス']},
         'ellipse':       {'channel': 'lv-ellipse',        'kw': ['ellipse', 'エリプス', 'エリプサ']},
         'saint_cloud':   {'channel': 'lv-saint-cloud',    'kw': ['saint-cloud', 'saint cloud', 'サンクルー', 'サン・クルー']},
-        'noe':           {'channel': 'lv-noe',            'kw': ['noé', 'noe', 'ノエ', 'ノエ・バケット', 'ノエバケット']},
+        'noe':           {'channel': 'lv-noe-et-bucket',  'kw': ['noé', 'noe', 'ノエ', 'ノエ・バケット', 'ノエバケット', 'bucket', 'バケット']},
         'papillon':      {'channel': 'lv-papillon',       'kw': ['papillon', 'パピヨン']},
         'boston':        {'channel': 'lv-boston',         'kw': ['boston', 'ボストン', 'ボストンバッグ']},
         'saumur':        {'channel': 'lv-saumur',         'kw': ['saumur', 'ソミュール', 'ソーミュール']},
