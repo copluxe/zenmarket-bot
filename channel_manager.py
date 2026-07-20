@@ -27,19 +27,19 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ('LOUIS VUITTON', [
         'lv-toutes-annonces',
         'lv-neverfull', 'lv-keepall', 'lv-speedy', 'lv-alma',
-        'lv-pochette-metis', 'lv-ellipse', 'lv-saint-cloud', 'lv-noe',
+        'lv-pochette-metis', 'lv-saint-cloud', 'lv-noe',
         'lv-pochettes', 'lv-cabas', 'lv-sacoches', 'lv-etuis',
         'lv-portefeuilles', 'lv-ceintures',
     ]),
     ('GUCCI', [
         'gucci-toutes-annonces',
-        'gucci-soho', 'gucci-jackie', 'gucci-gg-supreme', 'gucci-marmont',
+        'gucci-jackie', 'gucci-gg-supreme', 'gucci-marmont',
         'gucci-pochettes', 'gucci-cabas', 'gucci-sacoches', 'gucci-etuis',
         'gucci-portefeuilles', 'gucci-ceintures',
     ]),
     ('DIOR', [
         'dior-toutes-annonces',
-        'dior-trotter', 'dior-bowling', 'dior-boston', 'dior-lady-dior',
+        'dior-trotter', 'dior-boston', 'dior-lady-dior', 'dior-saddle',
         'dior-pochettes', 'dior-cabas', 'dior-sacoches', 'dior-etuis',
         'dior-portefeuilles', 'dior-ceintures',
     ]),
@@ -63,8 +63,7 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ]),
     ('COACH', [
         'coach-toutes-annonces',
-        'coach-tabby', 'coach-lana', 'coach-rowan',
-        'coach-sacs', 'coach-sacs-a-main',
+        'coach-tabby', 'coach-sacs', 'coach-sacs-a-main',
         'coach-pochettes', 'coach-cabas', 'coach-sacoches', 'coach-etuis',
         'coach-portefeuilles', 'coach-ceintures',
     ]),

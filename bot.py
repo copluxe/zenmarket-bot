@@ -52,6 +52,30 @@ JST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------------------
+# Price filters per channel (min_eur, max_eur). No entry = no filter.
+# ---------------------------------------------------------------------------
+
+CHANNEL_PRICE_FILTERS: dict[str, tuple[int, int]] = {
+    'lv-neverfull':     (100, 500),
+    'lv-keepall':       (100, 500),
+    'lv-speedy':        (100, 500),
+    'lv-alma':          (100, 500),
+    'lv-saint-cloud':   (40,  300),
+    'lv-noe':           (100, 500),
+    'lv-papillon':      (100, 500),
+    'lv-boston':        (100, 500),
+    'lv-trouville':     (100, 500),
+    'lv-portefeuilles': (0,    90),
+    'lv-ceintures':     (40,  300),
+    'lv-etuis':         (0,    70),
+    'lv-sacoches':      (40,  300),
+    'lv-pochettes':     (40,  300),
+    'lv-sacs':          (100, 500),
+    'lv-sacs-a-main':   (100, 500),
+    'lv-cabas':         (100, 500),
+}
+
+# ---------------------------------------------------------------------------
 # Bot
 # ---------------------------------------------------------------------------
 
@@ -144,11 +168,10 @@ class ZenMarketBot(discord.Client):
             if config.MAX_PRICE_YEN and listing.price_jpy > config.MAX_PRICE_YEN:
                 logger.info('[%s] PRIX FILTRE ¥%d > ¥%d — %s', brand_key, listing.price_jpy, config.MAX_PRICE_YEN, listing.id)
                 continue
-            # Dedup
-            if database.is_seen(listing.id):
+            # Dedup atomique — évite les doublons en cas de concurrence
+            if not database.mark_seen_atomic(listing.id, brand_key, source):
                 logger.debug('[%s] deja vu: %s', brand_key, listing.id)
                 continue
-            database.mark_seen(listing.id, brand_key, source)
             logger.info('[%s] NOUVEAU: %s ¥%d — "%s"', brand_key, listing.id, listing.price_jpy, listing.title[:50])
             await self._post_listing(listing, brand_key, brand_info)
             posted += 1
@@ -175,14 +198,42 @@ class ZenMarketBot(discord.Client):
         all_targets = list(channels_names)
         if 'nouveautes-toutes-marques' not in all_targets:
             all_targets.append('nouveautes-toutes-marques')
-        logger.info('Envoi vers salons: %s', all_targets)
 
         # If price is reduced, also send to #meilleures-affaires
         if listing.original_price_jpy:
             if 'meilleures-affaires' not in all_targets:
                 all_targets.append('meilleures-affaires')
 
+        # Cross-brand category channels (no price filter — toutes marques confondues)
+        _CATEGORY_GLOBAL = {
+            'sacs': 'sacs-toutes-les-marques',
+            'sacs-a-main': 'sacs-à-main',
+            'boston': 'boston',
+            'cabas': 'cabas',
+            'sacoches': 'sacoches',
+            'pochettes': 'pochettes',
+            'portefeuilles': 'portefeuilles',
+            'etuis': 'étuis',
+        }
+        prefix = brand_info['prefix']
+        for ch in channels_names:
+            if ch.startswith(prefix + '-'):
+                suffix = ch[len(prefix) + 1:]
+                global_ch = _CATEGORY_GLOBAL.get(suffix)
+                if global_ch and global_ch not in all_targets:
+                    all_targets.append(global_ch)
+
+        logger.info('[%s] ¥%d (€%d) → salons: %s', brand_key, listing.price_jpy, listing.price_eur, all_targets)
+
         for ch_name in all_targets:
+            # Price filter per channel (in EUR)
+            _price_filter = CHANNEL_PRICE_FILTERS.get(ch_name)
+            if _price_filter:
+                _min, _max = _price_filter
+                if not (_min <= listing.price_eur <= _max):
+                    logger.info('Prix filtré pour #%s: €%d hors [€%d-€%d]', ch_name, listing.price_eur, _min, _max)
+                    continue
+
             ch = self.channel_map.get(ch_name)
             if not ch:
                 logger.warning('Channel not found in map: #%s', ch_name)

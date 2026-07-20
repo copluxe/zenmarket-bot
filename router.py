@@ -16,6 +16,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     'etuis':        ['étui', 'etui', 'ケース', '小物'],
     'portefeuilles': ['portefeuille', '財布', 'ポルトフォイユ', 'ウォレット'],
     'ceintures':    ['ceinture', 'ベルト'],
+    'boston':       ['ボストンバッグ', 'ボストン'],
 }
 
 # Per-brand model detection. Keys are brand identifiers matching BRANDS below.
@@ -26,33 +27,32 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
         'speedy':        {'channel': 'lv-speedy',         'kw': ['speedy', 'スピーディ', 'スピーディー']},
         'alma':          {'channel': 'lv-alma',           'kw': ['alma', 'アルマ']},
         'pochette_metis':{'channel': 'lv-pochette-metis', 'kw': ['pochette métis', 'pochette metis', 'ポシェットメティス', 'ポシェット・メティス', 'ポシェットメチス']},
-        'ellipse':       {'channel': 'lv-ellipse',        'kw': ['ellipse', 'エリプス', 'エリプサ']},
         'saint_cloud':   {'channel': 'lv-saint-cloud',    'kw': ['saint-cloud', 'saint cloud', 'サンクルー', 'サン・クルー']},
-        'noe':           {'channel': 'lv-noe',            'kw': ['noé', 'noe', 'ノエ', 'ノエ・バケット', 'ノエバケット']},
+        'noe':           {'channel': 'lv-noe',            'kw': ['noé', 'noe', 'ノエ', 'ノエ・バケット', 'ノエバケット', 'bucket', 'バケット']},
         'papillon':      {'channel': 'lv-papillon',       'kw': ['papillon', 'パピヨン']},
         'boston':        {'channel': 'lv-boston',         'kw': ['boston', 'ボストン', 'ボストンバッグ']},
-        'saumur':        {'channel': 'lv-saumur',         'kw': ['saumur', 'ソミュール', 'ソーミュール']},
         'trouville':     {'channel': 'lv-trouville',      'kw': ['trouville', 'トルーヴィル', 'トルービル', 'トゥルーヴィル']},
     },
     'gucci': {
-        'soho':       {'channel': 'gucci-soho',       'kw': ['soho', 'ソーホー', 'ソホ']},
         'jackie':     {'channel': 'gucci-jackie',     'kw': ['jackie', 'ジャッキー', 'ジャッキ']},
         'gg_supreme': {'channel': 'gucci-gg-supreme', 'kw': ['gg supreme', 'GGスプリーム', 'gg スプリーム', 'ggスプリーム', 'ジージースプリーム']},
         'marmont':    {'channel': 'gucci-marmont',    'kw': ['marmont', 'マーモント', 'マルモント']},
     },
     'dior': {
         'trotter':    {'channel': 'dior-trotter',    'kw': ['trotter', 'トロッター', 'トロッタ']},
-        'bowling':    {'channel': 'dior-bowling',    'kw': ['bowling', 'ボーリング', 'ボウリング']},
         'boston':     {'channel': 'dior-boston',     'kw': ['boston', 'ボストン']},
         'lady_dior':  {'channel': 'dior-lady-dior',  'kw': ['lady dior', 'レディディオール', 'レディ ディオール', 'レディ・ディオール', 'lady christian dior']},
+        'saddle':     {'channel': 'dior-saddle',     'kw': ['saddle', 'サドル']},
     },
     'coach': {
         'tabby': {'channel': 'coach-tabby', 'kw': ['tabby', 'タビー']},
-        'lana':  {'channel': 'coach-lana',  'kw': ['lana', 'ラナ']},
-        'rowan': {'channel': 'coach-rowan', 'kw': ['rowan', 'ローワン']},
     },
     'celine': {
         'boston': {'channel': 'celine-boston', 'kw': ['boston', 'ボストン']},
+    },
+    'miumiu': {
+        'caprice':   {'channel': 'caprice',    'kw': ['caprice', 'カプリス', 'キャプリス']},
+        'matelasse': {'channel': 'matelassé',  'kw': ['matelassé', 'matelasse', 'マテラッセ', 'マトラッセ']},
     },
     'hermes': {
         'foulards': {'channel': 'hermes-foulards', 'kw': ['カレ', 'カレ90', 'スカーフ', 'バンダナ', 'foulard', 'carré', 'carre', 'bandana', 'ツイリー', 'twilly']},
