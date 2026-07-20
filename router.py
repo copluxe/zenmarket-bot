@@ -23,7 +23,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
 MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
     'louis_vuitton': {
         'neverfull':     {'channel': 'lv-neverfull',      'kw': ['neverfull', 'ネヴァーフル', 'ネバーフル', 'ネバフル']},
-        'keepall':       {'channel': 'lv-keepall',        'kw': ['keepall', 'キーポル', 'キーポール']},
+        'keepall':       {'channel': 'lv-keepall',        'kw': ['keepall', 'キーポル', 'キーポール', 'キープオール']},
         'speedy':        {'channel': 'lv-speedy',         'kw': ['speedy', 'スピーディ', 'スピーディー']},
         'alma':          {'channel': 'lv-alma',           'kw': ['alma', 'アルマ']},
         'pochette_metis':{'channel': 'lv-pochette-metis', 'kw': ['pochette métis', 'pochette metis', 'ポシェットメティス', 'ポシェット・メティス', 'ポシェットメチス']},
