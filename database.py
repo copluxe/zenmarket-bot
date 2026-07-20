@@ -44,22 +44,15 @@ def is_seen(listing_id: str) -> bool:
     return result is not None
 
 
-def mark_seen_atomic(listing_id: str, brand: str, source: str) -> bool:
-    """Insert atomically. Returns True if new, False if already seen (duplicate)."""
+def mark_seen(listing_id: str, brand: str, source: str):
     conn = get_connection()
     c = conn.cursor()
     c.execute(
         'INSERT OR IGNORE INTO seen_listings (listing_id, brand, source) VALUES (?, ?, ?)',
         (listing_id, brand, source),
     )
-    was_new = c.rowcount > 0
     conn.commit()
     conn.close()
-    return was_new
-
-
-def mark_seen(listing_id: str, brand: str, source: str):
-    mark_seen_atomic(listing_id, brand, source)
 
 
 def record_stat(brand: str, model: str, source: str):
