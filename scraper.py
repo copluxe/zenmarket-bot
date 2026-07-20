@@ -45,15 +45,11 @@ def _get_eur_per_jpy() -> float:
             )
             data = r.json()
             rate = data['rates']['EUR']
-            if not (0.003 < rate < 0.02):
-                logger.warning('Exchange rate sanity check failed: EUR/JPY=%s, fallback used', rate)
-                return 1 / 160.0
             _eur_rate_cache['rate'] = rate
             _eur_rate_cache['fetched_at'] = now
-            logger.info('Exchange rate updated: 1 JPY = %.6f EUR (1 EUR = %.1f JPY)', rate, 1 / rate)
             return rate
     except Exception as exc:
-        logger.warning('Exchange rate fetch failed: %s — fallback 1/160 used', exc)
+        logger.warning('Exchange rate fetch failed: %s', exc)
         return 1 / 160.0
 
 

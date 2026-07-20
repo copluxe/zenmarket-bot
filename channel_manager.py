@@ -27,19 +27,19 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ('LOUIS VUITTON', [
         'lv-toutes-annonces',
         'lv-neverfull', 'lv-keepall', 'lv-speedy', 'lv-alma',
-        'lv-pochette-metis', 'lv-saint-cloud', 'lv-noe',
+        'lv-pochette-metis', 'lv-ellipse', 'lv-saint-cloud', 'lv-noe',
         'lv-pochettes', 'lv-cabas', 'lv-sacoches', 'lv-etuis',
         'lv-portefeuilles', 'lv-ceintures',
     ]),
     ('GUCCI', [
         'gucci-toutes-annonces',
-        'gucci-jackie', 'gucci-gg-supreme', 'gucci-marmont',
+        'gucci-soho', 'gucci-jackie', 'gucci-gg-supreme', 'gucci-marmont',
         'gucci-pochettes', 'gucci-cabas', 'gucci-sacoches', 'gucci-etuis',
         'gucci-portefeuilles', 'gucci-ceintures',
     ]),
     ('DIOR', [
         'dior-toutes-annonces',
-        'dior-trotter', 'dior-boston', 'dior-lady-dior', 'dior-saddle',
+        'dior-trotter', 'dior-bowling', 'dior-boston', 'dior-lady-dior',
         'dior-pochettes', 'dior-cabas', 'dior-sacoches', 'dior-etuis',
         'dior-portefeuilles', 'dior-ceintures',
     ]),
@@ -63,7 +63,8 @@ SERVER_STRUCTURE: list[tuple[str, list[str]]] = [
     ]),
     ('COACH', [
         'coach-toutes-annonces',
-        'coach-tabby', 'coach-sacs', 'coach-sacs-a-main',
+        'coach-tabby', 'coach-lana', 'coach-rowan',
+        'coach-sacs', 'coach-sacs-a-main',
         'coach-pochettes', 'coach-cabas', 'coach-sacoches', 'coach-etuis',
         'coach-portefeuilles', 'coach-ceintures',
     ]),
@@ -136,9 +137,22 @@ Chaque annonce affiche un bouton **🧡 Sauvegarder**. Cliquez dessus pour épin
 
 
 async def setup_guild(guild: discord.Guild) -> dict[str, discord.TextChannel]:
-    """Build channel map from existing channels only. Never creates new channels."""
+    """Ensure all channels in SERVER_STRUCTURE exist, creating any that are missing."""
     channel_map: dict[str, discord.TextChannel] = {
         ch.name: ch for ch in guild.text_channels
     }
-    logger.info('Channel map built from existing channels: %d channels', len(channel_map))
+
+    for category_name, channel_names in SERVER_STRUCTURE:
+        category = discord.utils.get(guild.categories, name=category_name)
+        if not category:
+            category = await guild.create_category(category_name)
+            logger.info('Created category: %s', category_name)
+
+        for ch_name in channel_names:
+            if ch_name not in channel_map:
+                ch = await guild.create_text_channel(ch_name, category=category)
+                channel_map[ch_name] = ch
+                logger.info('Created channel: #%s', ch_name)
+
+    logger.info('Channel map built: %d channels', len(channel_map))
     return channel_map
