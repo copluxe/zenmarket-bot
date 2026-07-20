@@ -31,7 +31,7 @@ MODEL_KEYWORDS: dict[str, dict[str, dict]] = {
         'noe':           {'channel': 'lv-noe-et-bucket',   'kw': ['noé', 'noe', 'ノエ', 'ノエ・バケット', 'ノエバケット', 'bucket', 'バケット']},
         'papillon':      {'channel': 'lv-papillon',       'kw': ['papillon', 'パピヨン']},
         'boston':        {'channel': 'lv-boston',         'kw': ['boston', 'ボストン', 'ボストンバッグ']},
-        'trouville':     {'channel': 'lv-trouville',      'kw': ['trouville', 'トルーヴィル', 'トルービル', 'トゥルーヴィル']},
+        'trouville':     {'channel': 'lv-trouville',      'kw': ['trouville', 'トルーヴィル', 'トルービル', 'トゥルーヴィル', 'トゥルービル']},
     },
     'gucci': {
         'jackie':     {'channel': 'gucci-jackie',     'kw': ['jackie', 'ジャッキー', 'ジャッキ']},
