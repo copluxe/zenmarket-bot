@@ -183,7 +183,7 @@ class ZenMarketBot(discord.Client):
 
         # Cross-brand category channels
         _CATEGORY_GLOBAL = {
-            'sacs': 'sacs-toutes-les-marques',
+            'sacs': 'sacs',
             'sacs-a-main': 'sacs-à-main',
             'boston': 'boston',
             'cabas': 'cabas',
